@@ -1,0 +1,408 @@
+rules_version = '2';
+
+// Eğitim Takip - Firestore güvenlik kuralları
+// Bir öğrencinin verisini yalnızca o öğrenciye bağlı veliler, öğretmenler
+// ve öğrencinin kendi hesabı görebilir.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(uid())).data.role;
+    }
+    function invite(code) {
+      return get(/databases/$(database)/documents/invites/$(code)).data;
+    }
+
+    function studentData(sid) {
+      return get(/databases/$(database)/documents/students/$(sid)).data;
+    }
+    function isParentOf(sid) { return signedIn() && uid() in studentData(sid).parentIds; }
+    function isTeacherOf(sid) { return signedIn() && uid() in studentData(sid).teacherIds; }
+    function isStudentSelf(sid) { return signedIn() && studentData(sid).studentUid == uid(); }
+    function isAdultOf(sid) { return isParentOf(sid) || isTeacherOf(sid); }
+    function isMember(sid) { return isAdultOf(sid) || isStudentSelf(sid); }
+
+    function shortStr(v, max) { return v is string && v.size() <= max; }
+
+    // ---------------- Kullanıcı profilleri ----------------
+    match /users/{userId} {
+      // Tek tek okunabilir (bağlı kişilerin adını göstermek için), listelenemez.
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && uid() == userId
+        && request.resource.data.role in ['parent', 'student', 'teacher']
+        && shortStr(request.resource.data.name, 80);
+      // Rol sonradan değiştirilemez (yetki yükseltmeyi önler).
+      allow update: if signedIn() && uid() == userId
+        && request.resource.data.role == resource.data.role
+        && shortStr(request.resource.data.name, 80);
+      allow delete: if false;
+    }
+
+    // ---------------- Davet kodları ----------------
+    // kind: 'member' (öğretmen/öğrenci) ya da 'parent' (ikinci veli, tek kullanımlık)
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if isParentOf(request.resource.data.studentId)
+        && request.resource.data.kind in ['member', 'parent'];
+      allow delete: if isParentOf(resource.data.studentId);
+      allow update: if false;
+    }
+
+    // ---------------- Ortak kitap kataloğu ----------------
+    // Barkodla (ISBN) ya da adla kaydedilen kitapların bilgisi. Giriş yapan
+    // herkes okuyabilir ve ekleyebilir; böylece bir kez kaydedilen kitap
+    // (sayfa sayısı, konular) sonraki kullanıcılara otomatik gelir.
+    match /kitapKatalog/{kitapId} {
+      function validKitap(d) {
+        return d.size() <= 15
+          && shortStr(d.title, 200) && d.title.size() > 0
+          && (!('isbn' in d) || (d.isbn is string && d.isbn == kitapId))
+          && (!('author' in d) || shortStr(d.author, 200))
+          && (!('publisher' in d) || shortStr(d.publisher, 200))
+          && (!('subject' in d) || shortStr(d.subject, 60))
+          && (!('totalPages' in d) || (d.totalPages is int && d.totalPages >= 0 && d.totalPages <= 5000))
+          && (!('topics' in d) || (d.topics is list && d.topics.size() <= 300))
+          && d.anahtarlar is list && d.anahtarlar.size() <= 200
+          && d.updatedBy == uid();
+      }
+      allow read: if signedIn();
+      allow create, update: if signedIn() && validKitap(request.resource.data);
+      allow delete: if false;
+    }
+
+    // ---------------- Öğrenciler ----------------
+    match /students/{sid} {
+
+      function isJoin() {
+        let before = resource.data;
+        let after = request.resource.data;
+        let changed = after.diff(before).affectedKeys();
+        return (
+          (myRole() == 'teacher'
+            && after.joinCode == before.inviteCode
+            && changed.hasOnly(['teacherIds', 'joinCode'])
+            && after.teacherIds.toSet() == before.teacherIds.toSet().union([uid()].toSet()))
+          ||
+          (myRole() == 'student'
+            && after.joinCode == before.inviteCode
+            && changed.hasOnly(['studentUid', 'joinCode'])
+            && before.studentUid == null
+            && after.studentUid == uid())
+          ||
+          // Veli yalnızca, velilerin görebildiği ayrı "veli kodu" ile katılabilir.
+          (myRole() == 'parent'
+            && invite(after.joinCode).studentId == sid
+            && invite(after.joinCode).kind == 'parent'
+            && changed.hasOnly(['parentIds', 'joinCode'])
+            && after.parentIds.toSet() == before.parentIds.toSet().union([uid()].toSet()))
+        );
+      }
+
+      function isTeacherLeaving() {
+        let before = resource.data;
+        let after = request.resource.data;
+        return uid() in before.teacherIds
+          && after.diff(before).affectedKeys().hasOnly(['teacherIds'])
+          && after.teacherIds.toSet() == before.teacherIds.toSet().difference([uid()].toSet());
+      }
+
+      function validStudent(d) {
+        return shortStr(d.name, 80) && shortStr(d.grade, 40)
+          && d.parentIds is list && d.parentIds.size() >= 1 && d.parentIds.size() <= 4
+          && d.teacherIds is list && d.teacherIds.size() <= 30;
+      }
+
+      allow read: if signedIn() && (
+        uid() in resource.data.parentIds ||
+        uid() in resource.data.teacherIds ||
+        resource.data.studentUid == uid()
+      );
+
+      allow create: if signedIn()
+        && myRole() == 'parent'
+        && request.resource.data.parentIds == [uid()]
+        && request.resource.data.teacherIds.size() == 0
+        && request.resource.data.studentUid == null
+        && validStudent(request.resource.data);
+
+      allow update: if signedIn() && validStudent(request.resource.data) && (
+        uid() in resource.data.parentIds ||
+        isJoin() ||
+        isTeacherLeaving()
+      );
+
+      allow delete: if signedIn() && uid() in resource.data.parentIds;
+
+      // ---- Velilere özel: veli davet kodu ----
+      match /private/{docId} {
+        allow read, write: if isParentOf(sid);
+      }
+
+      // ---- Ödevler: öğrenci "kontrol edildi" alanlarını değiştiremez ----
+      match /homeworks/{hid} {
+        function validHw(d) {
+          return d.size() <= 20 && shortStr(d.title, 200)
+            && (!('description' in d) || shortStr(d.description, 2000))
+            && d.done is bool && d.checked is bool;
+        }
+        allow read: if isMember(sid);
+        allow create: if isMember(sid) && validHw(request.resource.data)
+          && request.resource.data.createdBy == uid()
+          && request.resource.data.checked == false;
+        allow update: if validHw(request.resource.data)
+          && request.resource.data.createdBy == resource.data.createdBy
+          && (isAdultOf(sid) || (
+            isStudentSelf(sid) &&
+            !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(['checked', 'checkedBy', 'checkedAt'])
+          ));
+        allow delete: if isAdultOf(sid)
+          || (isStudentSelf(sid) && resource.data.createdBy == uid());
+      }
+
+      // ---- Diğer modüller: kitaplar, okuma kayıtları, test kitapları, denemeler ----
+      match /{coll}/{docId} {
+        function generic() { return !(coll in ['homeworks', 'private']); }
+        function validDoc(d) {
+          return d.size() <= 25
+            && (!('title' in d) || shortStr(d.title, 200))
+            && (!('name' in d) || shortStr(d.name, 200))
+            && (!('topics' in d) || (d.topics is list && d.topics.size() <= 300))
+            && (!('solvedPages' in d) || (d.solvedPages is list && d.solvedPages.size() <= 3000))
+            && (!('completedTopics' in d) || (d.completedTopics is list && d.completedTopics.size() <= 300));
+        }
+        allow read: if generic() && isMember(sid);
+        allow create: if generic() && isMember(sid)
+          && validDoc(request.resource.data)
+          && request.resource.data.createdBy == uid();
+        allow update: if generic() && isMember(sid)
+          && validDoc(request.resource.data)
+          && request.resource.data.createdBy == resource.data.createdBy;
+        allow delete: if generic() && (
+          isAdultOf(sid) || (isStudentSelf(sid) && resource.data.createdBy == uid())
+        );
+      }
+    }
+
+    // =====================================================================
+    // Keleş Satış (ayrı uygulama, aynı Firebase projesi)
+    // Firma verisini yalnızca üyeler görür. Saha çalışanları yalnızca
+    // kendi girdikleri ve aracı oldukları siparişleri görür ve değiştirir. Davet kodları
+    // yalnızca yöneticilerin okuyabildiği gizli/kodlar belgesindedir.
+    // =====================================================================
+    function satisFirmaYolu(fid) {
+      return /databases/$(database)/documents/satis_firmalar/$(fid);
+    }
+    function satisFirma(fid) { return get(satisFirmaYolu(fid)).data; }
+    function satisUye(fid) { return signedIn() && uid() in satisFirma(fid).uyeler; }
+    function satisYonetici(fid) { return signedIn() && uid() in satisFirma(fid).yoneticiler; }
+    function satisSaha(fid) { return signedIn() && uid() in satisFirma(fid).get('saha', []); }
+    function satisGizliSonra(fid) {
+      return getAfter(/databases/$(database)/documents/satis_firmalar/$(fid)/gizli/kodlar).data;
+    }
+    function satisKatilimKodu(fid) {
+      return getAfter(/databases/$(database)/documents/satis_firmalar/$(fid)/katilim/$(uid())).data.kod;
+    }
+
+    match /satis_kullanicilar/{userId} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update: if signedIn() && uid() == userId
+        && (!('ad' in request.resource.data) || shortStr(request.resource.data.ad, 80))
+        && (!('firmaId' in request.resource.data) || shortStr(request.resource.data.firmaId, 64));
+      allow delete: if false;
+    }
+
+    // Davet kodu → firma (tur: ekip | saha). Kodu bilen okur; yalnız o
+    // firmanın yöneticisi, gizli belgede kayıtlı olan kodu yazabilir.
+    match /satis_kodlar/{kod} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && uid() in getAfter(satisFirmaYolu(request.resource.data.firmaId)).data.yoneticiler
+        && (satisGizliSonra(request.resource.data.firmaId).get('kod', '') == kod
+            || satisGizliSonra(request.resource.data.firmaId).get('sahaKod', '') == kod);
+      allow delete: if signedIn() && satisYonetici(resource.data.firmaId);
+      allow update: if false;
+    }
+
+    match /satis_firmalar/{fid} {
+      allow get: if signedIn()
+        && (uid() in resource.data.uyeler || uid() in resource.data.get('saha', []));
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.sahip == uid()
+        && request.resource.data.uyeler == [uid()]
+        && request.resource.data.yoneticiler == [uid()]
+        && request.resource.data.get('saha', []) == []
+        && request.resource.data.sayac == 0
+        && !('kod' in request.resource.data)
+        && shortStr(request.resource.data.ad, 40);
+      allow update: if signedIn() && (
+        // Yönetici: ayarlar ve ekip. Sahip değişmez, sahip çıkarılamaz.
+        (uid() in resource.data.yoneticiler
+          && request.resource.data.sahip == resource.data.sahip
+          && resource.data.sahip in request.resource.data.uyeler
+          && resource.data.sahip in request.resource.data.yoneticiler
+          && request.resource.data.yoneticiler.hasOnly(request.resource.data.uyeler)
+          && request.resource.data.sayac >= resource.data.sayac
+          && !('kod' in request.resource.data)
+          && !('katilKod' in request.resource.data)
+          && shortStr(request.resource.data.ad, 40))
+        // Üye ya da saha çalışanı: yalnızca sipariş sayacını bir artırır.
+        || ((uid() in resource.data.uyeler || uid() in resource.data.get('saha', []))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sayac'])
+          && request.resource.data.sayac == resource.data.sayac + 1)
+        // Ekibe katılım: ekip davet koduyla yalnızca kendini ekler.
+        || (!(uid() in resource.data.uyeler)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uyeler'])
+          && request.resource.data.uyeler.toSet() == resource.data.uyeler.toSet().union([uid()].toSet())
+          && satisKatilimKodu(fid) == satisGizliSonra(fid).kod)
+        // Sahaya katılım: saha davet koduyla yalnızca kendini ekler.
+        || (!(uid() in resource.data.get('saha', []))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['saha'])
+          && request.resource.data.saha.toSet() == resource.data.get('saha', []).toSet().union([uid()].toSet())
+          && satisKatilimKodu(fid) == satisGizliSonra(fid).sahaKod)
+      );
+      allow delete: if signedIn() && uid() == resource.data.sahip;
+
+      // Davet kodları: yalnızca yöneticiler okur ve yazar.
+      match /gizli/{belge} {
+        allow read: if satisYonetici(fid);
+        allow write: if signedIn()
+          && uid() in getAfter(satisFirmaYolu(fid)).data.yoneticiler;
+      }
+
+      // Katılırken girilen kod (kuralların kodu doğrulaması için).
+      match /katilim/{userId} {
+        allow create, update: if signedIn() && uid() == userId
+          && shortStr(request.resource.data.kod, 16);
+        allow read: if satisYonetici(fid);
+        allow delete: if false;
+      }
+
+      match /siparisler/{sid} {
+        function gecerli(d) {
+          return shortStr(d.musteri, 80) && d.musteri.size() > 0
+            && shortStr(d.urun, 60) && d.urun.size() > 0
+            && d.miktar is number && d.miktar > 0
+            && shortStr(d.birim, 16)
+            && (!('not' in d) || shortStr(d.not, 500))
+            && (!('araci' in d) || shortStr(d.araci, 80))
+            && (d.fiyat == null || (d.fiyat is number && d.fiyat >= 0))
+            && d.tahsilatlar is list && d.tahsilatlar.size() <= 200;
+        }
+        // Saha çalışanı: kendi girdiği ya da aracı olarak bağlandığı
+        // (gorenler) satışlar. Bağlamayı yalnızca ekip üyeleri değiştirir.
+        allow read: if satisUye(fid)
+          || (satisSaha(fid)
+              && (resource.data.olusturan == uid() || uid() in resource.data.gorenler));
+        allow create: if (satisUye(fid)
+            || (satisSaha(fid) && request.resource.data.get('gorenler', []) == []))
+          && request.resource.data.olusturan == uid()
+          && gecerli(request.resource.data);
+        allow update: if (satisUye(fid)
+            || (satisSaha(fid)
+                && (resource.data.olusturan == uid() || uid() in resource.data.gorenler)
+                && request.resource.data.get('gorenler', []) == resource.data.get('gorenler', [])))
+          && request.resource.data.olusturan == resource.data.olusturan
+          && request.resource.data.no == resource.data.no
+          && gecerli(request.resource.data);
+        allow delete: if satisYonetici(fid)
+          || (satisUye(fid) && resource.data.olusturan == uid());
+      }
+    }
+
+    // =====================================================================
+    // Tarlam (ayrı uygulama, aynı Firebase projesi)
+    // İşletme verisini yalnızca üyeler görür ve yazar. Davet kodu yalnızca
+    // yöneticilerin okuyabildiği gizli/kodlar belgesindedir.
+    // Keleş Satış verisi Tarlam'dan yalnızca okunur (yukarıdaki kurallar).
+    // =====================================================================
+    function tarlamYol(iid) {
+      return /databases/$(database)/documents/tarlam_isletmeler/$(iid);
+    }
+    function tarlamUye(iid) { return signedIn() && uid() in get(tarlamYol(iid)).data.uyeler; }
+    function tarlamYonetici(iid) { return signedIn() && uid() in get(tarlamYol(iid)).data.yoneticiler; }
+    function tarlamGizliSonra(iid) {
+      return getAfter(/databases/$(database)/documents/tarlam_isletmeler/$(iid)/gizli/kodlar).data;
+    }
+
+    match /tarlam_kullanicilar/{userId} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update: if signedIn() && uid() == userId
+        && (!('ad' in request.resource.data) || shortStr(request.resource.data.ad, 80))
+        && (!('isletmeId' in request.resource.data) || shortStr(request.resource.data.isletmeId, 64));
+      allow delete: if false;
+    }
+
+    match /tarlam_kodlar/{kod} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && uid() in getAfter(tarlamYol(request.resource.data.isletmeId)).data.yoneticiler
+        && tarlamGizliSonra(request.resource.data.isletmeId).get('kod', '') == kod;
+      allow delete: if signedIn() && tarlamYonetici(resource.data.isletmeId);
+      allow update: if false;
+    }
+
+    match /tarlam_isletmeler/{iid} {
+      allow get: if signedIn() && uid() in resource.data.uyeler;
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.sahip == uid()
+        && request.resource.data.uyeler == [uid()]
+        && request.resource.data.yoneticiler == [uid()]
+        && shortStr(request.resource.data.ad, 60);
+      allow update: if signedIn() && (
+        // Yönetici: ayarlar ve ekip. Sahip değişmez, sahip çıkarılamaz.
+        (uid() in resource.data.yoneticiler
+          && request.resource.data.sahip == resource.data.sahip
+          && resource.data.sahip in request.resource.data.uyeler
+          && resource.data.sahip in request.resource.data.yoneticiler
+          && request.resource.data.yoneticiler.hasOnly(request.resource.data.uyeler)
+          && shortStr(request.resource.data.ad, 60))
+        // Üye: yalnızca ayarları değiştirebilir.
+        || (uid() in resource.data.uyeler
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ayarlar']))
+        // Katılım: davet koduyla yalnızca kendini ekler.
+        || (!(uid() in resource.data.uyeler)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uyeler'])
+          && request.resource.data.uyeler.toSet() == resource.data.uyeler.toSet().union([uid()].toSet())
+          && getAfter(/databases/$(database)/documents/tarlam_isletmeler/$(iid)/katilim/$(uid())).data.kod
+             == tarlamGizliSonra(iid).kod)
+      );
+      allow delete: if signedIn() && uid() == resource.data.sahip;
+
+      match /gizli/{belge} {
+        allow read: if tarlamYonetici(iid);
+        allow write: if signedIn() && uid() in getAfter(tarlamYol(iid)).data.yoneticiler;
+      }
+
+      match /katilim/{userId} {
+        allow create, update: if signedIn() && uid() == userId
+          && shortStr(request.resource.data.kod, 16);
+        allow read: if tarlamYonetici(iid);
+        allow delete: if false;
+      }
+
+      // Tarlalar, ekimler, giderler, satışlar, hesaplar, gelirler...
+      match /{koleksiyon}/{belge} {
+        function tarlamKoleksiyon() {
+          return koleksiyon in ['tarlalar', 'ekimler', 'giderler', 'sayaclar',
+            'satislar', 'hesaplar', 'gelirler', 'isyerleri', 'varliklar',
+            'fiyatlar', 'isler', 'kotalar', 'ekipmanlar'];
+        }
+        allow read: if tarlamKoleksiyon() && tarlamUye(iid);
+        allow create, update: if tarlamKoleksiyon() && tarlamUye(iid)
+          && request.resource.data.size() <= 40;
+        allow delete: if tarlamKoleksiyon() && tarlamUye(iid);
+      }
+    }
+  }
+}

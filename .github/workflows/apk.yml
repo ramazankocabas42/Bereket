@@ -1,0 +1,70 @@
+name: APK Derle
+
+# Kod her güncellendiğinde (ya da Actions sekmesinden elle) APK derlenir
+# ve "Releases" bölümüne indirilebilir dosya olarak konur. Telefonlardaki
+# uygulama yeni sürümü buradan görüp kendini günceller.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # İmza anahtarının şifresi: Settings → Secrets and variables → Actions
+  BEREKET_KEYSTORE_PASSWORD: ${{ secrets.BEREKET_KEYSTORE_PASSWORD }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Android proje dosyalarını oluştur
+        run: flutter create --platforms=android --org com.kocabas --project-name bereket .
+
+      - name: Android ayarları (uygulama adı, izinler, imza anahtarı)
+        run: |
+          if [ -z "$BEREKET_KEYSTORE_PASSWORD" ]; then
+            echo "::error::İmza şifresi eksik. GitHub → Settings → Secrets and variables → Actions bölümüne BEREKET_KEYSTORE_PASSWORD ekleyin."
+            exit 1
+          fi
+          python3 ci/android_ayarla.py .
+
+      - name: Paketleri güncelle
+        run: flutter pub upgrade --major-versions firebase_core firebase_auth cloud_firestore flutter_lints
+
+      - name: Testler
+        run: flutter test
+
+      - name: APK derle
+        run: |
+          flutter build apk --release --build-number=${{ github.run_number }} --dart-define=BUILD_NUMBER=${{ github.run_number }}
+          mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/bereket.apk
+
+      - name: İmza kontrolü (güncellemeler eskisinin üzerine kurulabilsin)
+        run: python3 ci/imza_kontrol.py build/app/outputs/flutter-apk/bereket.apk ci/bereket.p12
+
+      - name: APK'yı yayınla
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: surum-${{ github.run_number }}
+          name: Bereket - Sürüm ${{ github.run_number }}
+          body: |
+            ${{ github.event.head_commit.message }}
+
+            Telefona ilk kez kurmak için aşağıdaki bereket.apk dosyasına dokunun. Uygulama kuruluysa güncelleme uygulamanın içinden gelir.
+          files: build/app/outputs/flutter-apk/bereket.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
