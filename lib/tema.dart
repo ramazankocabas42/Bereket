@@ -3,13 +3,13 @@ import 'package:flutter/material.dart';
 /// Koyu lacivert, oyun ekranı havasında tema: parlak kartlar, renkli
 /// kabartma butonlar, üstte sayaç hapları.
 class Renk {
-  static const zemin = Color(0xFF0E1830);
-  static const zeminAlt = Color(0xFF111D38);
-  static const kart = Color(0xFF1A2745);
-  static const kartAcik = Color(0xFF233354);
-  static const cizgi = Color(0xFF34466E);
-  static const yazi = Color(0xFFF4F6FB);
-  static const soluk = Color(0xFF9AA8C7);
+  static const zemin = Color(0xFF070C18);
+  static const zeminAlt = Color(0xFF0B1324);
+  static const kart = Color(0xFF111A2E);
+  static const kartAcik = Color(0xFF17223A);
+  static const cizgi = Color(0xFF26324D);
+  static const yazi = Color(0xFFFFFFFF);
+  static const soluk = Color(0xFFB7C2DA);
 
   static const altin = Color(0xFFF5C451);
   static const yesil = Color(0xFF5DBB4F);
@@ -178,11 +178,7 @@ class Panel extends StatelessWidget {
     return Container(
       margin: margin ?? const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Renk.kartAcik, Renk.kart],
-        ),
+        color: Renk.kart,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: kenarRengi ?? Renk.cizgi, width: 1.2),
       ),
@@ -382,7 +378,7 @@ class Kare extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [Renk.kart, renk.withValues(alpha: 0.55)],
+                  colors: [Renk.kart, renk.withValues(alpha: 0.35)],
                 ),
               ),
               child: Padding(
@@ -435,7 +431,7 @@ class Kare extends StatelessWidget {
   }
 }
 
-/// Ana sayfadaki büyük renkli işlem kartı.
+/// Ana sayfadaki büyük işlem kartı: koyu zemin, renkli kenar ve simge.
 class BuyukKart extends StatelessWidget {
   const BuyukKart({
     super.key,
@@ -457,67 +453,72 @@ class BuyukKart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.hardEdge,
-      children: [
-        Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(18),
-            onTap: onTap,
-            child: Ink(
-              height: 92,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: Colors.white24),
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [renk1, renk2],
+    return SizedBox(
+      width: double.infinity,
+      height: 108,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Ink(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: renk1.withValues(alpha: 0.85), width: 1.6),
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [renk2.withValues(alpha: 0.55), Renk.kart],
+              ),
+            ),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(simge, style: const TextStyle(fontSize: 30)),
+                        const SizedBox(height: 4),
+                        Text(baslik,
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Renk.yazi,
+                                fontSize: 16.5,
+                                fontWeight: FontWeight.w800)),
+                        if (alt != null)
+                          Text(alt!,
+                              textAlign: TextAlign.center,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Renk.soluk, fontSize: 12.5)),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(simge, style: const TextStyle(fontSize: 30)),
-                  Text(baslik,
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800)),
-                  if (alt != null)
-                    Text(alt!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                ],
-              ),
+                if (rozet != null)
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Renk.kirmizi,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(rozet!,
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
-        if (rozet != null)
-          Positioned(
-            right: -22,
-            top: 10,
-            child: Transform.rotate(
-              angle: 0.75,
-              child: Container(
-                width: 90,
-                color: Renk.kirmizi,
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Text(rozet!,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800)),
-              ),
-            ),
-          ),
-      ],
+      ),
     );
   }
 }
