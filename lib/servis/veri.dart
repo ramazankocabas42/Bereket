@@ -185,19 +185,21 @@ class Veri {
       required double tutar,
       required String aciklama,
       required int tarih,
-      String? uid}) async {
+      String? uid,
+      String yon = 'borc'}) async {
     final ad = kime.trim();
     if (ad.isEmpty || tutar <= 0) return;
+    final alacak = yon == 'alacak';
     Kayit? hesap;
     for (final h in v.hesaplar) {
-      if (h.s('yon') != 'alacak' && h.s('ad').toLowerCase() == ad.toLowerCase()) {
+      if ((h.s('yon') == 'alacak') == alacak && h.s('ad').toLowerCase() == ad.toLowerCase()) {
         hesap = h;
       }
     }
     final id = hesap?.id ??
         await kaydet(iid, 'hesaplar', {
           'ad': ad,
-          'yon': 'borc',
+          'yon': alacak ? 'alacak' : 'borc',
           'tur': tur,
           'birim': 'TL',
           'hareketler': <Map<String, dynamic>>[],

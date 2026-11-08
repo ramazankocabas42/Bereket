@@ -7,6 +7,7 @@ import '../servis/veri.dart';
 import '../tema.dart';
 import 'aile.dart';
 import 'arge.dart';
+import 'belge_okut.dart';
 import 'depo.dart';
 import 'ekisler.dart';
 import 'hesaplar.dart';
@@ -96,7 +97,7 @@ class AnaSayfa extends StatelessWidget {
             return ListView(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
               children: [
-                _baslik(),
+                _baslik(context),
                 const SizedBox(height: 10),
                 UstSayaclar(durum: durum, v: v),
                 const SizedBox(height: 14),
@@ -119,10 +120,24 @@ class AnaSayfa extends StatelessWidget {
     );
   }
 
-  Widget _baslik() {
+  Widget _baslik(BuildContext context) {
     return Row(
       children: [
-        const Text('🧺', style: TextStyle(fontSize: 30)),
+        InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => git(context, BelgeOkut(durum: durum)),
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: Renk.kart,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Renk.yesil, width: 1.6),
+            ),
+            alignment: Alignment.center,
+            child: const Text('📷', style: TextStyle(fontSize: 24)),
+          ),
+        ),
         const Spacer(),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
@@ -140,7 +155,11 @@ class AnaSayfa extends StatelessWidget {
                   shadows: [Shadow(color: Colors.black54, offset: Offset(0, 2))])),
         ),
         const Spacer(),
-        const Text('🚜', style: TextStyle(fontSize: 30)),
+        const SizedBox(
+          width: 48,
+          height: 48,
+          child: Center(child: Text('🚜', style: TextStyle(fontSize: 30))),
+        ),
       ],
     );
   }

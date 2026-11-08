@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:bereket/belge.dart';
 import 'package:bereket/bicim.dart';
 import 'package:bereket/ekstre.dart';
 import 'package:bereket/hesap.dart';
@@ -166,5 +167,28 @@ void main() {
     expect(tarlaKalemiTahmin('TOROS GUBRE BAYI'), 'Gübre');
     expect(tutarOku('(150,00)'), -150);
     expect(tutarOku('1,234.56'), 1234.56);
+  });
+
+  test('Belge: akaryakıt fişi', () {
+    const fis = 'OPET KARAPINAR PETROL\n'
+        'TARIH: 05.11.2026 SAAT: 14:32\n'
+        'MOTORIN 42,50 LT X 45,00\n'
+        'TOPLAM *1.912,50\n'
+        'KDV *318,75\n';
+    final o = belgeCoz(fis);
+    expect(o.tur, BelgeTuru.akaryakit);
+    expect(o.toplam, 1912.5);
+    expect(o.litre, 42.5);
+    expect(DateTime.fromMillisecondsSinceEpoch(o.tarih).day, 5);
+    expect(o.firma, 'OPET KARAPINAR PETROL');
+  });
+
+  test('Belge: el yazısı hesap', () {
+    const not = 'Ali 1.500\nVeli 2.250\nmazot 200 lt 9.000';
+    final o = belgeCoz(not);
+    expect(o.tur, BelgeTuru.elYazisi);
+    expect(o.satirlar.length, 3);
+    expect(o.toplam, 12750);
+    expect(o.satirlar.last.miktar, 200);
   });
 }
