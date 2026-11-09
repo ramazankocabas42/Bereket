@@ -191,4 +191,20 @@ void main() {
     expect(o.toplam, 12750);
     expect(o.satirlar.last.miktar, 200);
   });
+
+  test('Aile alacak/verecek hesaplaşmaya girer', () {
+    final v = Veriler(koleksiyonlar: {
+      'aile_hareketler': [
+        k('h1', {'kisi': 'Babam', 'yon': 'o_verdi', 'tutar': 10000, 'yil': 2026}),
+        k('h2', {'kisi': 'Babam', 'yon': 'ben_verdim', 'tutar': 2500, 'yil': 2026}),
+        k('h3', {'kisi': 'Kardeşim', 'yon': 'o_verdi', 'tutar': 999, 'yil': 2026}),
+      ],
+    });
+    final b = v.sahipOzet('Babam');
+    expect(b.onunVerdigi, 10000);
+    expect(b.benimVerdigim, 2500);
+    expect(b.hesaplasma, 7500);
+    final ozet = v.aileOzeti('Babam');
+    expect((ozet['tumu'] as Map)['hesaplasma'], 7500);
+  });
 }

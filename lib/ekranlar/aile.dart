@@ -5,6 +5,7 @@ import '../hesap.dart';
 import '../sabitler.dart';
 import '../servis/veri.dart';
 import '../tema.dart';
+import 'aile_uye.dart';
 import 'kabuk.dart';
 import 'uretim.dart';
 
@@ -107,7 +108,28 @@ class _AileSayfasiState extends State<AileSayfasi> {
                 ),
               ),
           ],
-          if (!ben && (o.masraf > 0 || o.tahsil > 0 || o.destekDuzeltme != 0)) ...[
+          if (!ben) ...[
+            const Divider(height: 18),
+            Row(
+              children: [
+                const Expanded(child: Text('Alacak / verecek', style: yaziSoluk)),
+                TextButton(
+                  onPressed: () => aileHareketFormu(context, widget.durum, kisi: o.sahip),
+                  child: const Text('+ Ekle'),
+                ),
+              ],
+            ),
+            for (final h in v.aileHareketleri.where((h) => h.s('kisi') == o.sahip).take(8))
+              InkWell(
+                onTap: () => aileHareketFormu(context, widget.durum, kisi: o.sahip, hareket: h),
+                child: Satir(
+                    '${tarih(h.t('tarih'))} · ${h.s('yon') == 'o_verdi' ? '${o.sahip} verdi' : 'Ben verdim'}'
+                    '${h.s('aciklama').isEmpty ? '' : ' · ${h.s('aciklama')}'}',
+                    tl0(h.n('tutar')),
+                    renk: h.s('yon') == 'o_verdi' ? Renk.turuncu : Renk.yesil),
+              ),
+          ],
+          if (!ben && (o.masraf > 0 || o.tahsil > 0 || o.destekDuzeltme != 0 || o.onunVerdigi > 0 || o.benimVerdigim > 0)) ...[
             const Divider(height: 18),
             Container(
               padding: const EdgeInsets.all(12),
@@ -123,6 +145,8 @@ class _AileSayfasiState extends State<AileSayfasi> {
                   const SizedBox(height: 4),
                   Satir('Sizin yaptığınız masraf', tl0(o.masraf)),
                   Satir('Satıştan sizin aldığınız', tl0(o.tahsil)),
+                  if (o.onunVerdigi > 0) Satir('${o.sahip} size verdi', tl0(o.onunVerdigi)),
+                  if (o.benimVerdigim > 0) Satir('Siz ${o.sahip} için verdiniz', tl0(o.benimVerdigim)),
                   if (o.destekDuzeltme != 0)
                     Satir(
                         o.destekDuzeltme > 0

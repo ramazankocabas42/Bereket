@@ -278,6 +278,38 @@ service cloud.firestore {
       }
 
       // Katılırken girilen kod (kuralların kodu doğrulaması için).
+      match /aileKatilim/{userId} {
+        allow create, update: if signedIn() && uid() == userId
+          && shortStr(request.resource.data.kod, 16);
+        allow read: if tarlamYonetici(iid);
+        allow delete: if false;
+      }
+
+      // Aile üyesinin ekranı için özet: işletme üyeleri yazar, kişi kendi özetini okur.
+      match /aile_ozet/{ad} {
+        allow read: if tarlamUye(iid)
+          || (signedIn() && tarlamAileAdi(iid) != '' && tarlamAileAdi(iid) == ad);
+        allow write: if tarlamUye(iid);
+      }
+
+      // Aile ile alacak/verecek kayıtları.
+      match /aile_hareketler/{hid} {
+        allow read: if tarlamUye(iid)
+          || (signedIn() && tarlamAileAdi(iid) != '' && resource.data.kisi == tarlamAileAdi(iid));
+        allow create: if (tarlamUye(iid)
+          || (signedIn() && tarlamAileAdi(iid) != ''
+            && request.resource.data.kisi == tarlamAileAdi(iid)
+            && request.resource.data.ekleyen == uid()))
+          && request.resource.data.size() <= 20;
+        allow update: if tarlamUye(iid)
+          || (signedIn() && resource.data.ekleyen == uid()
+            && request.resource.data.kisi == resource.data.kisi
+            && request.resource.data.ekleyen == uid()
+            && request.resource.data.size() <= 20);
+        allow delete: if tarlamUye(iid)
+          || (signedIn() && resource.data.ekleyen == uid());
+      }
+
       match /katilim/{userId} {
         allow create, update: if signedIn() && uid() == userId
           && shortStr(request.resource.data.kod, 16);
@@ -328,6 +360,13 @@ service cloud.firestore {
     }
     function tarlamUye(iid) { return signedIn() && uid() in get(tarlamYol(iid)).data.uyeler; }
     function tarlamYonetici(iid) { return signedIn() && uid() in get(tarlamYol(iid)).data.yoneticiler; }
+    // Aile üyesi (Babam, Kardeşim): yalnızca kendi özetini ve hareketlerini görür.
+    function tarlamAileAdi(iid) {
+      return get(tarlamYol(iid)).data.get('aile', {}).get(uid(), '');
+    }
+    function tarlamAileKodu(iid) {
+      return get(/databases/$(database)/documents/tarlam_aile_kodlar/$(getAfter(/databases/$(database)/documents/tarlam_isletmeler/$(iid)/aileKatilim/$(uid())).data.kod)).data;
+    }
     function tarlamGizliSonra(iid) {
       return getAfter(/databases/$(database)/documents/tarlam_isletmeler/$(iid)/gizli/kodlar).data;
     }
@@ -351,8 +390,19 @@ service cloud.firestore {
       allow update: if false;
     }
 
+    match /tarlam_aile_kodlar/{kod} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && uid() in get(tarlamYol(request.resource.data.isletmeId)).data.yoneticiler
+        && shortStr(request.resource.data.ad, 40);
+      allow delete: if signedIn() && tarlamYonetici(resource.data.isletmeId);
+      allow update: if false;
+    }
+
     match /tarlam_isletmeler/{iid} {
-      allow get: if signedIn() && uid() in resource.data.uyeler;
+      allow get: if signedIn()
+        && (uid() in resource.data.uyeler || uid() in resource.data.get('aile', {}).keys());
       allow list: if false;
       allow create: if signedIn()
         && request.resource.data.sahip == uid()
@@ -370,6 +420,12 @@ service cloud.firestore {
         // Üye: yalnızca ayarları değiştirebilir.
         || (uid() in resource.data.uyeler
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ayarlar']))
+        // Aile katılımı: aile koduyla yalnızca kendini, koddaki adla ekler.
+        || (!(uid() in resource.data.uyeler)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['aile'])
+          && request.resource.data.aile.diff(resource.data.get('aile', {})).affectedKeys().hasOnly([uid()])
+          && tarlamAileKodu(iid).isletmeId == iid
+          && request.resource.data.aile[uid()] == tarlamAileKodu(iid).ad)
         // Katılım: davet koduyla yalnızca kendini ekler.
         || (!(uid() in resource.data.uyeler)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uyeler'])

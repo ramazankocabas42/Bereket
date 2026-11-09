@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -23,10 +24,26 @@ class Veri {
       _db.collection('tarlam_kodlar');
   static CollectionReference<Map<String, dynamic>> get isletmeler =>
       _db.collection('tarlam_isletmeler');
+  static CollectionReference<Map<String, dynamic>> get aileKodlari =>
+      _db.collection('tarlam_aile_kodlar');
+
+  /// Aile üyesi (Babam, Kardeşim) için katılma kodu üretir.
+  static Future<String> aileKoduOlustur(String iid, String ad) async {
+    final kod = yeniKod();
+    await aileKodlari.doc(kod).set({'isletmeId': iid, 'ad': ad, 'olusturma': simdi});
+    return kod;
+  }
+
+  /// Aile üyesini işletmeden çıkarır (yönetici).
+  static Future<void> aileUyesiCikar(String iid, String uid) =>
+      isletmeler.doc(iid).update({'aile.$uid': FieldValue.delete()});
+
+  static Future<void> aileOzetiYaz(String iid, String ad, Map<String, dynamic> ozet) =>
+      isletmeler.doc(iid).collection('aile_ozet').doc(ad).set({...ozet, 'guncelleme': simdi});
 
   static const koleksiyonlar = [
     'tarlalar', 'ekimler', 'giderler', 'sayaclar', 'satislar', 'hesaplar',
-    'gelirler', 'isyerleri', 'varliklar', 'fiyatlar', 'isler', 'kotalar', 'ekipmanlar',
+    'gelirler', 'isyerleri', 'varliklar', 'fiyatlar', 'isler', 'kotalar', 'ekipmanlar', 'aile_hareketler',
   ];
 
   static CollectionReference<Map<String, dynamic>> kol(String iid, String ad) =>
@@ -68,7 +85,28 @@ class Veri {
     final k = await kodlar.doc(kod).get();
     final iid = k.data()?['isletmeId'] as String?;
     if (!k.exists || iid == null) {
-      throw 'Bu davet kodu bulunamadı. Kodu işletme sahibinden tekrar isteyin.';
+      // Aile kodu mu?
+      final a = await aileKodlari.doc(kod).get();
+      final aiid = a.data()?['isletmeId'] as String?;
+      final aad = a.data()?['ad'] as String?;
+      if (!a.exists || aiid == null || aad == null) {
+        throw 'Bu davet kodu bulunamadı. Kodu işletme sahibinden tekrar isteyin.';
+      }
+      final b = _db.batch();
+      b.set(isletmeler.doc(aiid).collection('aileKatilim').doc(uid), {'kod': kod});
+      b.update(isletmeler.doc(aiid), {'aile.$uid': aad});
+      try {
+        await b.commit();
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied') {
+          throw 'Bu kod artık geçerli değil. Yeni kodu isteyin.';
+        }
+        rethrow;
+      }
+      await kullanicilar
+          .doc(uid)
+          .set({'ad': ad.trim(), 'isletmeId': aiid}, SetOptions(merge: true));
+      return;
     }
     var zatenVar = false;
     try {
@@ -232,6 +270,18 @@ class Durum extends ChangeNotifier {
   int _deneme = 0;
 
   bool get uye => isletme?.uyeler.contains(uid) ?? false;
+
+  /// Aile üyesiyse hesap sahibi adı (Babam, Kardeşim); değilse boş.
+  String get aileAdi => isletme?.aile[uid] ?? '';
+  bool get aileUyesi => !uye && aileAdi.isNotEmpty;
+
+  // Aile üyesi görünümü
+  Map<String, dynamic>? aileOzet;
+  List<Kayit> aileHareketler = const [];
+  bool aileYuklendi = false;
+  StreamSubscription? _aoAbone, _ahAbone;
+  Timer? _ozetZamanlayici;
+  final Map<String, String> _yazilanOzet = {};
   bool get yonetici => isletme?.yoneticiler.contains(uid) ?? false;
   bool get yuklendi => _yuklenen.length == Veri.koleksiyonlar.length;
 
@@ -241,6 +291,51 @@ class Durum extends ChangeNotifier {
   void _yenile() {
     _v = Veriler(isletme: isletme, koleksiyonlar: Map.of(_k));
     notifyListeners();
+    if (uye && yuklendi && (isletme?.aile.isNotEmpty ?? false)) {
+      _ozetZamanlayici?.cancel();
+      _ozetZamanlayici = Timer(const Duration(seconds: 3), _aileOzetleriniYaz);
+    }
+  }
+
+  /// Aile üyelerinin ekranındaki özetleri günceller (değiştiyse).
+  Future<void> _aileOzetleriniYaz() async {
+    if (_kapandi) return;
+    final adlar = {...?isletme?.aile.values};
+    for (final ad in adlar) {
+      try {
+        final o = _v.aileOzeti(ad);
+        final j = jsonEncode(o);
+        if (_yazilanOzet[ad] == j) continue;
+        await Veri.aileOzetiYaz(iid, ad, o);
+        _yazilanOzet[ad] = j;
+      } catch (e) {
+        debugPrint('Aile özeti yazılamadı ($ad): $e');
+      }
+    }
+  }
+
+  void _aileDinle() {
+    final ad = aileAdi;
+    _aoAbone = Veri.isletmeler.doc(iid).collection('aile_ozet').doc(ad).snapshots().listen((s) {
+      aileOzet = s.data();
+      aileYuklendi = true;
+      notifyListeners();
+    }, onError: (Object e) {
+      hata = e;
+      aileYuklendi = true;
+      notifyListeners();
+    });
+    _ahAbone = Veri.kol(iid, 'aile_hareketler')
+        .where('kisi', isEqualTo: ad)
+        .snapshots()
+        .listen((s) {
+      aileHareketler = [for (final d in s.docs) Kayit(d.id, d.data())]
+        ..sort((a, b) => b.t('tarih').compareTo(a.t('tarih')));
+      notifyListeners();
+    }, onError: (Object e) {
+      hata = e;
+      notifyListeners();
+    });
   }
 
   void _dinle() {
@@ -251,6 +346,7 @@ class Durum extends ChangeNotifier {
       isletme = s.exists ? Isletme.fromMap(s.id, s.data()!) : null;
       hata = null;
       if (uye && _aboneler.isEmpty) _koleksiyonlariDinle();
+      if (aileUyesi && _aoAbone == null) _aileDinle();
       if (yonetici && _gAbone == null) {
         _gAbone = Veri.gizli(iid).snapshots().listen((g) {
           davetKodu = (g.data()?['kod'] as String?) ?? '';
@@ -291,8 +387,8 @@ class Durum extends ChangeNotifier {
   Future<void> _isimleriGetir() async {
     final i = isletme;
     if (i == null) return;
-    for (final u in i.uyeler) {
-      if (isimler.containsKey(u)) continue;
+    for (final u in {...i.uyeler, ...i.aile.keys, i.sahip}) {
+      if (u.isEmpty || isimler.containsKey(u)) continue;
       isimler[u] = '';
       try {
         final d = await Veri.kullanicilar.doc(u).get();
@@ -316,6 +412,9 @@ class Durum extends ChangeNotifier {
   @override
   void dispose() {
     _kapandi = true;
+    _ozetZamanlayici?.cancel();
+    _aoAbone?.cancel();
+    _ahAbone?.cancel();
     _iAbone?.cancel();
     _gAbone?.cancel();
     for (final a in _aboneler) {

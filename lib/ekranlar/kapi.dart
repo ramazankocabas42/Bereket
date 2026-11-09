@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../servis/guncelleme.dart';
 import '../servis/veri.dart';
 import '../tema.dart';
+import 'aile_uye.dart';
 import 'giris.dart';
 import 'kabuk.dart';
 
@@ -95,7 +96,7 @@ class _FirmaKapiState extends State<_FirmaKapi> {
       listenable: _durum,
       builder: (context, _) {
         final d = _durum;
-        if (d.isletmeYok || (d.isletme == null && d.hata != null) || (d.isletme != null && !d.uye)) {
+        if (d.isletmeYok || (d.isletme == null && d.hata != null) || (d.isletme != null && !d.uye && !d.aileUyesi)) {
           return Scaffold(
             body: SafeArea(
               child: Center(
@@ -138,6 +139,7 @@ class _FirmaKapiState extends State<_FirmaKapi> {
           );
         }
         if (d.isletme == null) return const _Yukleniyor();
+        if (d.aileUyesi) return AileUyeEkrani(durum: d);
         return Kabuk(durum: d);
       },
     );

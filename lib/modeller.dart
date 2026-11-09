@@ -65,7 +65,11 @@ class Isletme {
     required this.uyeler,
     required this.yoneticiler,
     required this.ayarlar,
+    this.aile = const {},
   });
+
+  /// Aile üyeleri: kullanıcı kimliği → hesap sahibi adı (Babam, Kardeşim).
+  final Map<String, String> aile;
 
   final String id;
   final String ad;
@@ -85,6 +89,9 @@ class Isletme {
       uyeler: l('uyeler'),
       yoneticiler: l('yoneticiler'),
       ayarlar: a is Map ? {for (final e in a.entries) e.key.toString(): e.value} : {},
+      aile: d['aile'] is Map
+          ? {for (final e in (d['aile'] as Map).entries) e.key.toString(): e.value.toString()}
+          : const {},
     );
   }
 

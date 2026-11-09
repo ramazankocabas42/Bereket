@@ -133,6 +133,7 @@ class ProfilSayfasi extends StatelessWidget {
               ),
               _ayarlar(context, v),
               _ekip(context),
+              if (durum.yonetici) _aile(context, v),
               Panel(
                 baslik: 'Hesap',
                 child: Column(
@@ -268,6 +269,86 @@ class ProfilSayfasi extends StatelessWidget {
             ayar('${u.simge} ${u.ad}', '${v.araYil(u.ad)} yılda bir',
                 () => _sayiAyar(context, 'munavebe.${u.ad}', '${u.ad}: kaç yılda bir?',
                     v.araYil(u.ad).toDouble())),
+        ],
+      ),
+    );
+  }
+
+  Widget _aile(BuildContext context, Veriler v) {
+    final i = durum.isletme!;
+    final kisiler = v.sahipler().where((s) => s != Veriler.ben).toList();
+    return Panel(
+      baslik: 'Aile Üyeleri',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Babanız, kardeşiniz Bereket\'i kurup aile koduyla katılır. Yalnızca kendi tarla '
+            'hesaplarını görür, sizinle alacak/verecek ekleyebilirler. Sizin diğer bilgilerinizi göremezler.',
+            style: yaziSoluk,
+          ),
+          const SizedBox(height: 6),
+          for (final e in i.aile.entries)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Text('👤', style: TextStyle(fontSize: 22)),
+              title: Text('${e.value} · ${durum.isim(e.key)}', style: const TextStyle(color: Renk.yazi)),
+              trailing: IconButton(
+                icon: const Icon(Icons.person_remove_outlined, color: Renk.kirmizi),
+                onPressed: () async {
+                  try {
+                    await Veri.aileUyesiCikar(i.id, e.key);
+                  } catch (err) {
+                    if (context.mounted) bildir(context, hataYazisi(err));
+                  }
+                },
+              ),
+            ),
+          const SizedBox(height: 6),
+          Buton(
+            yazi: 'Aile için kod oluştur',
+            renk: ButonRenk.mor,
+            yukseklik: 46,
+            onTap: () async {
+              final kim = await secimYap(context, 'Kimin için?', kisiler);
+              if (kim == null) return;
+              try {
+                final kod = await Veri.aileKoduOlustur(i.id, kim);
+                if (!context.mounted) return;
+                await showDialog<void>(
+                  context: context,
+                  builder: (c) => AlertDialog(
+                    title: Text('$kim için kod'),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SelectableText(kod,
+                            style: const TextStyle(
+                                color: Renk.altin,
+                                fontSize: 30,
+                                letterSpacing: 3,
+                                fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Bereket\'i kurup hesap açtıktan sonra "Davet kodu ile katıl" bölümüne bu kodu yazsın.',
+                          style: yaziSoluk,
+                        ),
+                      ],
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Clipboard.setData(ClipboardData(text: kod)),
+                        child: const Text('Kopyala'),
+                      ),
+                      FilledButton(onPressed: () => Navigator.pop(c), child: const Text('Tamam')),
+                    ],
+                  ),
+                );
+              } catch (err) {
+                if (context.mounted) bildir(context, hataYazisi(err));
+              }
+            },
+          ),
         ],
       ),
     );

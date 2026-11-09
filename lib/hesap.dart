@@ -27,6 +27,7 @@ class Veriler {
   List<Kayit> get isler => k['isler'] ?? const [];
   List<Kayit> get kotalar => k['kotalar'] ?? const [];
   List<Kayit> get ekipmanlar => k['ekipmanlar'] ?? const [];
+  List<Kayit> get aileHareketleri => k['aile_hareketler'] ?? const [];
 
   double ekipmanDegeri(Kayit e) =>
       e.n('guncelDeger') > 0 ? e.n('guncelDeger') : e.n('alisFiyati');
@@ -235,6 +236,15 @@ class Veriler {
       o.hasatKg += z.hasatKg * p;
     }
     o.kiraGeliri = kiraGeliri(sahip);
+    for (final h in aileHareketleri) {
+      if (h.s('kisi') != sahip) continue;
+      if (yil != null && h.yil != yil) continue;
+      if (h.s('yon') == 'o_verdi') {
+        o.onunVerdigi += h.n('tutar');
+      } else {
+        o.benimVerdigim += h.n('tutar');
+      }
+    }
     for (final g in destekler) {
       if (yil != null && g.yil != yil) continue;
       final paylar = destekSahipPaylari(g);
@@ -704,6 +714,39 @@ class Veriler {
     return s.toList()..sort((a, b) => b.compareTo(a));
   }
 
+  /// Aile üyesinin göreceği bütün özet: yıllara göre ve tüm yıllar, tarlalar.
+  Map<String, dynamic> aileOzeti(String ad) {
+    final yillarSet = <int>{};
+    for (final e in ekimler) {
+      if ((ekimPaylari(e)[ad] ?? 0) > 0) yillarSet.add(e.t('yil'));
+    }
+    for (final h in aileHareketleri) {
+      if (h.s('kisi') == ad) yillarSet.add(h.yil);
+    }
+    final tarlaListesi = <Map<String, dynamic>>[];
+    for (final t in tarlalar) {
+      final p = tarlaPaylari(t.id)[ad] ?? 0;
+      final eskiden = ekimler.any((e) => e.s('tarlaId') == t.id && (ekimPaylari(e)[ad] ?? 0) > 0);
+      if (p <= 0 && !eskiden) continue;
+      tarlaListesi.add({
+        'ad': tarlaAdi(t.id),
+        'mahalle': t.s('mahalle'),
+        'ada': t.s('ada'),
+        'parsel': t.s('parsel'),
+        'dekar': t.n('dekar'),
+        'pay': p,
+        'mulkiyet': t.s('mulkiyet'),
+        'gecmis': {for (final e in urunGecmisi(t).entries) '${e.key}': e.value},
+      });
+    }
+    return {
+      'ad': ad,
+      'tumu': sahipOzet(ad).harita(this),
+      'yillar': {for (final y in yillarSet) '$y': sahipOzet(ad, yil: y).harita(this)},
+      'tarlalar': tarlaListesi,
+    };
+  }
+
   // ---------------------------------------------------------------------
   // Gelir-gider defteri ve ev hedefi
   // ---------------------------------------------------------------------
@@ -1106,13 +1149,53 @@ class SahipOzet {
   /// Desteklerden doğan aile içi alacak/borç (bkz. hesaplasma).
   double destekDuzeltme = 0;
 
+  /// Aile hareketleri: kişinin bana verdiği / benim kişiye verdiğim.
+  double onunVerdigi = 0, benimVerdigim = 0;
+
   double get masraf => kalemler.values.fold(0.0, (a, k) => a + k.tutar);
   double get kar => satis + kiraGeliri + destek - masraf;
 
   /// Hesaplaşma: + ise bende kişiye ait para var (ona ödenecek);
   /// − ise kişi bana borçlu. Satıştan tahsil edilen − yaptığım masraf ±
   /// yanlış hesaba yatan destekler.
-  double get hesaplasma => tahsil - masraf + destekDuzeltme;
+  double get hesaplasma =>
+      tahsil - masraf + destekDuzeltme + onunVerdigi - benimVerdigim;
+
+  /// Aile üyesinin ekranı için özet (Firestore'a yazılır).
+  Map<String, dynamic> harita(Veriler v) => {
+        'masraf': masraf,
+        'satis': satis,
+        'tahsil': tahsil,
+        'destek': destek,
+        'kiraGeliri': kiraGeliri,
+        'kar': kar,
+        'hasatKg': hasatKg,
+        'satisKg': satisKg,
+        'dekar': dekar,
+        'tarlaSayisi': tarlaSayisi,
+        'destekDuzeltme': destekDuzeltme,
+        'onunVerdigi': onunVerdigi,
+        'benimVerdigim': benimVerdigim,
+        'hesaplasma': hesaplasma,
+        'kalemler': {
+          for (final e in kalemler.entries)
+            e.key: {'tutar': e.value.tutar, 'miktar': e.value.miktar, 'birim': e.value.birim}
+        },
+        'ekimler': [
+          for (var i = 0; i < ekimler.length; i++)
+            {
+              'yil': ekimler[i].ekim.t('yil'),
+              'urun': ekimler[i].ekim.s('urun'),
+              'tarla': v.tarlaAdi(ekimler[i].ekim.s('tarlaId')),
+              'dekar': ekimler[i].dekar * paylar[i],
+              'pay': paylar[i],
+              'masraf': ekimler[i].toplam * paylar[i],
+              'hasatKg': ekimler[i].hasatKg * paylar[i],
+              'kar': ekimler[i].kar * paylar[i],
+              'durum': ekimler[i].ekim.s('durum'),
+            }
+        ],
+      };
 }
 
 /// Satışa yapılan ödemelerin toplamı (avans, ürün bedeli...).
