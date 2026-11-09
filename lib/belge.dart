@@ -6,7 +6,7 @@ library;
 import 'bicim.dart';
 import 'ekstre.dart';
 
-enum BelgeTuru { akaryakit, market, elektrik, faturaDiger, tarim, elYazisi, diger }
+enum BelgeTuru { akaryakit, market, elektrik, faturaDiger, tarim, dekont, elYazisi, diger }
 
 const belgeTuruAdi = {
   BelgeTuru.akaryakit: '⛽ Akaryakıt fişi',
@@ -14,6 +14,7 @@ const belgeTuruAdi = {
   BelgeTuru.elektrik: '⚡ Elektrik faturası',
   BelgeTuru.faturaDiger: '🧾 Fatura',
   BelgeTuru.tarim: '🌱 Tarım girdisi (gübre, ilaç, tohum)',
+  BelgeTuru.dekont: '🏦 Dekont / POS slip (ödeme)',
   BelgeTuru.elYazisi: '✍️ El yazısı / hesap listesi',
   BelgeTuru.diger: '📄 Belge',
 };
@@ -36,7 +37,11 @@ class BelgeOzet {
     this.kalem,
     this.aboneNo = '',
     this.kwh,
+    this.odemeBelgesi = false,
   });
+
+  /// Dekont ya da POS slip: bir ödemenin kanıtı (fatura değil).
+  bool odemeBelgesi;
 
   /// Elektrik faturasında abone / tesisat numarası.
   String aboneNo;
@@ -78,7 +83,15 @@ BelgeOzet belgeCoz(String hamMetin, {DateTime? bugun}) {
 
   // Tür
   BelgeTuru tur;
-  if (_var(a, ['motorin', 'benzin', 'kursunsuz', 'dizel', 'diesel', 'akaryakit', 'opet', 'shell',
+  // Faturalarda da "IBAN / havale ile ödeyebilirsiniz" yazar; onları dekont saymamak için.
+  final havale = _var(a, ['dekont', 'virman', 'para transferi', 'hesaptan hesaba']) ||
+      (_var(a, ['havale', ' eft', 'fast ']) && !_var(a, ['fatura', 'e-arsiv'])) ||
+      (a.contains('gonderen') && a.contains('alici'));
+  final slip = _var(a, ['slip', ' pos ', 'onay kodu', 'provizyon', 'musteri nushasi',
+    'satis tutari', 'islem tutari', 'kart no', 'temassiz']);
+  if (havale) {
+    tur = BelgeTuru.dekont;
+  } else if (_var(a, ['motorin', 'benzin', 'kursunsuz', 'dizel', 'diesel', 'akaryakit', 'opet', 'shell',
     'petrol ofisi', 'aytemiz', ' lpg', 'pompa'])) {
     tur = BelgeTuru.akaryakit;
   } else if (_var(a, ['gubre', 'zirai ilac', 'tohum', ' dap ', ' ure ', 'amonyum', 'herbisit',
@@ -88,6 +101,8 @@ BelgeOzet belgeCoz(String hamMetin, {DateTime? bugun}) {
     tur = BelgeTuru.elektrik;
   } else if (_var(a, ['migros', ' bim ', 'a101', ' sok ', 'carrefour', 'market', 'file '])) {
     tur = BelgeTuru.market;
+  } else if (slip) {
+    tur = BelgeTuru.dekont;
   } else if (_var(a, ['fatura', 'e-arsiv', 'vergi no', 'vkn', 'kdv'])) {
     tur = BelgeTuru.faturaDiger;
   } else {
@@ -116,6 +131,22 @@ BelgeOzet belgeCoz(String hamMetin, {DateTime? bugun}) {
     if (RegExp(r'[A-Za-zÇĞİÖŞÜçğıöşü]{3,}').hasMatch(s) && !araMetni(s).contains('fis')) {
       firma = s;
       break;
+    }
+  }
+
+  // Dekont: parayı alan firma / kişi
+  if (havale) {
+    for (var i = 0; i < satirlar.length; i++) {
+      final k = araMetni(satirlar[i]);
+      if (!k.contains('alici') || (k.contains('iban') && !k.contains('ad'))) continue;
+      var ad = satirlar[i].contains(':')
+          ? satirlar[i].substring(satirlar[i].indexOf(':') + 1).trim()
+          : satirlar[i].replaceAll(RegExp(r'^[^ ]*ALICI[^ ]*\s*(ADI|UNVANI|ÜNVANI)?\s*(SOYADI)?', caseSensitive: false), '').trim();
+      if (ad.length < 3 && i + 1 < satirlar.length) ad = satirlar[i + 1];
+      if (RegExp(r'[A-Za-zÇĞİÖŞÜçğıöşü]{3,}').hasMatch(ad) && !araMetni(ad).startsWith('tr')) {
+        firma = ad;
+        break;
+      }
     }
   }
 
@@ -191,6 +222,7 @@ BelgeOzet belgeCoz(String hamMetin, {DateTime? bugun}) {
   if (tur == BelgeTuru.akaryakit) kalem = 'Mazot';
   if (tur == BelgeTuru.tarim) kalem = tarlaKalemiTahmin(hamMetin) ?? 'Gübre';
   if (tur == BelgeTuru.elektrik) kalem = 'Elektrik';
+  if (tur == BelgeTuru.dekont) kalem = tarlaKalemiTahmin(hamMetin);
 
   return BelgeOzet(
     tur: tur,
@@ -202,5 +234,6 @@ BelgeOzet belgeCoz(String hamMetin, {DateTime? bugun}) {
     kalem: kalem,
     aboneNo: aboneNo,
     kwh: kwh,
+    odemeBelgesi: tur == BelgeTuru.dekont,
   );
 }

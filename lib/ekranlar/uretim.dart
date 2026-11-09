@@ -6,6 +6,8 @@ import '../modeller.dart';
 import '../sabitler.dart';
 import '../servis/veri.dart';
 import '../tema.dart';
+import 'belge_arsiv.dart';
+import 'belge_okut.dart';
 import 'form.dart';
 import 'kabuk.dart';
 import 'satislar.dart';
@@ -362,6 +364,23 @@ class _UretimSayfasiState extends State<UretimSayfasi> {
                             onTap: () => giderFormu(context, durum, iscilik: true))),
                   ],
                 ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                        child: Buton(
+                            yazi: 'Gider Ekle',
+                            renk: ButonRenk.mor,
+                            onTap: () => giderFormu(context, durum))),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: Buton(
+                            yazi: 'Fiş / Fatura Çek',
+                            ikon: Icons.photo_camera,
+                            renk: ButonRenk.turuncu,
+                            onTap: () => git(context, BelgeOkut(durum: durum)))),
+                  ],
+                ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
@@ -619,6 +638,13 @@ class _UretimSayfasiState extends State<UretimSayfasi> {
                   ],
                 ),
               ),
+              if (g.s('belgeId').isNotEmpty || g.s('odemeBelgeId').isNotEmpty)
+                IconButton(
+                  tooltip: 'Belgeyi aç',
+                  icon: const Icon(Icons.attach_file, color: Renk.altin),
+                  onPressed: () => belgeGoster(context, durum,
+                      g.s('belgeId').isNotEmpty ? g.s('belgeId') : g.s('odemeBelgeId')),
+                ),
               Text(tl0(g.n('tutar')),
                   style: const TextStyle(color: Renk.yazi, fontWeight: FontWeight.w800)),
             ],

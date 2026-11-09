@@ -13,6 +13,7 @@ import '../modeller.dart';
 import '../sabitler.dart';
 import '../servis/veri.dart';
 import '../tema.dart';
+import 'belge_arsiv.dart';
 import 'form.dart';
 import 'uretim.dart';
 
@@ -27,7 +28,7 @@ class BelgeOkut extends StatefulWidget {
 }
 
 /// Belgenin nereye işleneceği.
-enum _Hedef { evGider, tarlaGider, araba }
+enum _Hedef { evGider, tarlaGider, araba, borcOdeme }
 
 /// El yazısı satırı için seçim.
 enum _SatirHedef { ev, tarla, borc, alacak, atla }
@@ -48,6 +49,9 @@ class _BelgeOkutState extends State<BelgeOkut> {
   final Set<String> _tarlalar = {};
   String _sayac = '';
   bool _odendi = true;
+  String? _arsivYolu;
+  bool _sakla = true;
+  String _odemeHesap = '';
   final Map<BelgeSatiri, _SatirHedef> _satirHedef = {};
 
   Durum get durum => widget.durum;
@@ -67,6 +71,7 @@ class _BelgeOkutState extends State<BelgeOkut> {
       setState(() {
         _okunuyor = true;
         _resim = File(x.path);
+        _arsivYolu = x.path;
         _ozet = null;
       });
       await _oku([x.path]);
@@ -145,6 +150,7 @@ class _BelgeOkutState extends State<BelgeOkut> {
         yollar.add(yol);
       }
       if (yollar.isEmpty) throw 'Dosyadan sayfa çıkarılamadı.';
+      _arsivYolu = yollar.first;
       if (mounted) setState(() => _resim = File(yollar.first));
       await _oku(yollar);
     } catch (e) {
@@ -188,6 +194,16 @@ class _BelgeOkutState extends State<BelgeOkut> {
       case BelgeTuru.tarim:
         _hedef = _Hedef.tarlaGider;
         _tarlaKalem = o.kalem ?? 'Gübre';
+      case BelgeTuru.dekont:
+        final aday = _borcAdaylari(o.firma, o.toplam);
+        _tarlaKalem = o.kalem ?? 'Diğer';
+        _evKategori = evKategorisiTahmin(_metin);
+        if (aday.isNotEmpty) {
+          _hedef = _Hedef.borcOdeme;
+          _odemeHesap = aday.first.id;
+        } else {
+          _hedef = o.kalem != null ? _Hedef.tarlaGider : _Hedef.evGider;
+        }
       case BelgeTuru.faturaDiger:
       case BelgeTuru.diger:
         _hedef = _Hedef.evGider;
@@ -200,6 +216,40 @@ class _BelgeOkutState extends State<BelgeOkut> {
     }
   }
 
+  /// Bakiyesi olan borç hesapları; dekonttaki alıcıya ve tutara en uyan başta.
+  List<Kayit> _borcAdaylari(String firma, double tutar, {bool hepsi = false}) {
+    final v = durum.v;
+    final f = araMetni(firma);
+    int puan(Kayit h) {
+      var p = 0;
+      final ad = araMetni(h.s('ad'));
+      final ilk = ad.split(' ').first;
+      if (f.isNotEmpty && ilk.length >= 3 && (f.contains(ilk) || ad.contains(f.split(' ').first))) p += 2;
+      final tol = tutar * 0.01 < 1 ? 1 : tutar * 0.01;
+      if ((v.bakiye(h) - tutar).abs() <= tol) p += 2;
+      if (h.n('taksitTutari') > 0 && (h.n('taksitTutari') - tutar).abs() <= tol) p += 2;
+      return p;
+    }
+
+    final l = [
+      for (final h in v.hesaplar)
+        if (h.s('yon') != 'alacak' && v.bakiye(h) > 0.5 && (hepsi || puan(h) > 0)) h
+    ];
+    l.sort((a, b) => puan(b).compareTo(puan(a)));
+    return l;
+  }
+
+  /// Aynı tutarda, yakın tarihte zaten girilmiş gider (mükerrer uyarısı).
+  List<Kayit> _benzerGiderler(double tutar, int tarihMs) {
+    if (tutar <= 0) return const [];
+    return [
+      for (final g in durum.v.giderler)
+        if ((g.n('tutar') - tutar).abs() <= 0.5 &&
+            (g.t('tarih') - tarihMs).abs() <= const Duration(days: 10).inMilliseconds)
+          g
+    ];
+  }
+
   Future<void> _onayla() async {
     final o = _ozet;
     if (o == null) return;
@@ -209,6 +259,15 @@ class _BelgeOkutState extends State<BelgeOkut> {
     final firma = _firma.text.trim();
     setState(() => _mesgul = true);
     try {
+      final yol = _arsivYolu;
+      final belgeId = _sakla && yol != null
+          ? await belgeArsivle(durum, yol, {
+              'tur': o.tur.name,
+              'firma': firma,
+              'tutar': o.tur == BelgeTuru.elYazisi ? o.toplam : tutar,
+              'tarih': o.tarih,
+            })
+          : null;
       if (o.tur == BelgeTuru.elYazisi) {
         var n = 0;
         for (final e in _satirHedef.entries) {
@@ -226,6 +285,7 @@ class _BelgeOkutState extends State<BelgeOkut> {
                 'tarih': o.tarih,
                 'yil': t.year,
                 'kaynak': 'belge',
+                'belgeId': belgeId,
               });
             case _SatirHedef.tarla:
               await durum.kaydet('giderler', {
@@ -239,6 +299,7 @@ class _BelgeOkutState extends State<BelgeOkut> {
                 'tarlaIds': _tarlalar.toList(),
                 'odendi': true,
                 'kaynak': 'belge',
+                'belgeId': belgeId,
               });
             case _SatirHedef.borc:
             case _SatirHedef.alacak:
@@ -275,7 +336,27 @@ class _BelgeOkutState extends State<BelgeOkut> {
             'tedarikci': firma.isEmpty ? sayacK.s('kurum') : firma,
             'odeme': 'Tamamını ben ödedim',
             'aciklama': 'Fatura ${o.aboneNo}',
+            'belgeId': belgeId,
           });
+          return;
+        }
+        if (_hedef == _Hedef.borcOdeme) {
+          if (_odemeHesap.isEmpty) throw 'Ödenen borcu seçin.';
+          await Veri.hareketEkle(durum.iid, _odemeHesap,
+              tip: 'odeme',
+              tutar: tutar,
+              aciklama: ['Dekont', if (firma.isNotEmpty) firma].join(' · '),
+              tarih: o.tarih);
+          // Aynı tutarda ödenmemiş fatura varsa ödendi işaretle.
+          for (final g in v.giderler) {
+            if (g.d['odendi'] == false && (g.n('tutar') - tutar).abs() <= 0.5) {
+              await durum.kaydet('giderler', {'odendi': true, if (belgeId != null) 'odemeBelgeId': belgeId},
+                  id: g.id);
+              break;
+            }
+          }
+          if (mounted) bildir(context, 'Ödeme borçtan düşüldü.');
+          if (mounted) Navigator.of(context).pop();
           return;
         }
         if (_hedef == _Hedef.tarlaGider) {
@@ -294,6 +375,7 @@ class _BelgeOkutState extends State<BelgeOkut> {
             'sayacId': sayacId,
             'odendi': _odendi,
             'kaynak': 'belge',
+            'belgeId': belgeId,
           });
           if (!_odendi && firma.isNotEmpty) {
             await Veri.borcaYaz(durum.iid, v,
@@ -315,6 +397,7 @@ class _BelgeOkutState extends State<BelgeOkut> {
             'tarih': o.tarih,
             'yil': t.year,
             'kaynak': 'belge',
+            'belgeId': belgeId,
           });
         }
         if (mounted) bildir(context, 'Belge işlendi.');
@@ -331,7 +414,17 @@ class _BelgeOkutState extends State<BelgeOkut> {
   Widget build(BuildContext context) {
     final o = _ozet;
     return Scaffold(
-      appBar: AppBar(title: const Text('Belge Okut')),
+      appBar: AppBar(
+        title: const Text('Fiş · Fatura · Dekont'),
+        actions: [
+          TextButton.icon(
+            onPressed: () => Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => BelgelerSayfasi(durum: durum))),
+            icon: const Icon(Icons.folder_open, color: Renk.altin),
+            label: const Text('Belgelerim', style: TextStyle(color: Renk.altin)),
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(14, 4, 14, 30),
         children: [
@@ -340,7 +433,7 @@ class _BelgeOkutState extends State<BelgeOkut> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Text(
-                  'Fiş, fatura ya da el yazısı hesabı düz bir zeminde, iyi ışıkta çekin. '
+                  'Fiş, fatura, ödeme dekontu, POS slip ya da el yazısı hesabı düz bir zeminde, iyi ışıkta çekin. '
                   'Yazı telefonda okunur, internete gönderilmez.',
                   style: yaziSoluk,
                 ),
@@ -396,6 +489,10 @@ class _BelgeOkutState extends State<BelgeOkut> {
 
   List<Widget> _onayBolumu(BelgeOzet o) {
     final v = durum.v;
+    final borclar = _borcAdaylari(_firma.text, sayiOku(_toplam.text) ?? o.toplam, hepsi: true);
+    final benzer = o.tur == BelgeTuru.elYazisi || _hedef == _Hedef.borcOdeme
+        ? const <Kayit>[]
+        : _benzerGiderler(sayiOku(_toplam.text) ?? o.toplam, o.tarih);
     Widget tarlaSecimi() => Wrap(
           spacing: 6,
           runSpacing: 6,
@@ -568,9 +665,33 @@ class _BelgeOkutState extends State<BelgeOkut> {
                     selected: _hedef == _Hedef.tarlaGider,
                     onSelected: (_) => setState(() => _hedef = _Hedef.tarlaGider),
                   ),
+                  if (borclar.isNotEmpty)
+                    ChoiceChip(
+                      label: const Text('💳 Borç ödemesi'),
+                      selected: _hedef == _Hedef.borcOdeme,
+                      onSelected: (_) => setState(() {
+                        _hedef = _Hedef.borcOdeme;
+                        if (_odemeHesap.isEmpty) _odemeHesap = borclar.first.id;
+                      }),
+                    ),
                 ],
               ),
               const SizedBox(height: 10),
+              if (_hedef == _Hedef.borcOdeme)
+                DropdownButtonFormField<String>(
+                  initialValue: borclar.any((h) => h.id == _odemeHesap) ? _odemeHesap : null,
+                  isExpanded: true,
+                  dropdownColor: Renk.kartAcik,
+                  decoration: const InputDecoration(labelText: 'Hangi borç ödendi?'),
+                  items: [
+                    for (final h in borclar)
+                      DropdownMenuItem(
+                          value: h.id,
+                          child: Text('${h.s('ad')} · kalan ${tl0(v.bakiye(h))}',
+                              overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged: (x) => setState(() => _odemeHesap = x ?? ''),
+                ),
               if (_hedef == _Hedef.evGider)
                 DropdownButtonFormField<String>(
                   initialValue: evKategorileri.contains(_evKategori) ? _evKategori : 'Diğer',
@@ -613,6 +734,24 @@ class _BelgeOkutState extends State<BelgeOkut> {
             ],
           ),
         ),
+      if (benzer.isNotEmpty)
+        Panel(
+          kenarRengi: Renk.turuncu,
+          child: Text(
+            '⚠️ Bu tutarda kayıt zaten var: '
+            '${benzer.map((g) => '${g.s('kalem')} ${g.s('aciklama')} (${tarih(g.t('tarih'))})').join(', ')}. '
+            'Aynı harcamanın faturası ve dekontu ise tekrar eklemeyin.',
+            style: const TextStyle(color: Renk.yazi, height: 1.35),
+          ),
+        ),
+      if (_arsivYolu != null)
+        SwitchListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+          value: _sakla,
+          onChanged: (b) => setState(() => _sakla = b),
+          title: const Text('📎 Belgenin fotoğrafını sakla', style: TextStyle(color: Renk.yazi)),
+          subtitle: const Text('Kayda eklenir, sonra Belgelerim\'den açabilirsiniz.', style: yaziSoluk),
+        ),
       Panel(
         kenarRengi: Renk.yesil,
         child: Text(_ozetYazisi(o), style: const TextStyle(color: Renk.yazi, fontSize: 15.5, height: 1.4)),
@@ -639,6 +778,8 @@ class _BelgeOkutState extends State<BelgeOkut> {
     final nereye = switch (_hedef) {
       _Hedef.araba => 'Ev Bütçem → Araba (yakıt)',
       _Hedef.evGider => 'Ev Bütçem → $_evKategori',
+      _Hedef.borcOdeme =>
+        'Borç ödemesi → ${durum.v.bul('hesaplar', _odemeHesap)?.s('ad') ?? 'borç seçin'}',
       _Hedef.tarlaGider => 'Tarla gideri → $_tarlaKalem'
           '${_tarlalar.isEmpty ? '' : ' (${_tarlalar.length} tarlaya dekara göre)'}',
     };

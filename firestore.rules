@@ -452,7 +452,7 @@ service cloud.firestore {
         function tarlamKoleksiyon() {
           return koleksiyon in ['tarlalar', 'ekimler', 'giderler', 'sayaclar',
             'satislar', 'hesaplar', 'gelirler', 'isyerleri', 'varliklar',
-            'fiyatlar', 'isler', 'kotalar', 'ekipmanlar'];
+            'fiyatlar', 'isler', 'kotalar', 'ekipmanlar', 'belgeler'];
         }
         allow read: if tarlamKoleksiyon() && tarlamUye(iid);
         allow create, update: if tarlamKoleksiyon() && tarlamUye(iid)

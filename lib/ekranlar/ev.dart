@@ -11,6 +11,7 @@ import '../sabitler.dart';
 import '../servis/veri.dart';
 import '../tema.dart';
 import 'banka_mesajlari.dart';
+import 'belge_arsiv.dart';
 import 'belge_okut.dart';
 import 'defter.dart';
 import 'ekipman.dart';
@@ -275,8 +276,19 @@ class _EvButcesiSayfasiState extends State<EvButcesiSayfasi> {
                               [tarih(g.t('tarih')), g.s('kalem'), if (g.s('banka').isNotEmpty) g.s('banka')]
                                   .join(' · '),
                               style: yaziSoluk),
-                          trailing: Text(tl0(g.n('tutar')),
-                              style: const TextStyle(color: Renk.yazi, fontWeight: FontWeight.w700)),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (g.s('belgeId').isNotEmpty)
+                                IconButton(
+                                  visualDensity: VisualDensity.compact,
+                                  icon: const Icon(Icons.attach_file, color: Renk.altin, size: 20),
+                                  onPressed: () => belgeGoster(context, durum, g.s('belgeId')),
+                                ),
+                              Text(tl0(g.n('tutar')),
+                                  style: const TextStyle(color: Renk.yazi, fontWeight: FontWeight.w700)),
+                            ],
+                          ),
                           onTap: () => giderFormu(context, durum, gider: g),
                         ),
                     ],

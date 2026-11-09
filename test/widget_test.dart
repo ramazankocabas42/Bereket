@@ -238,4 +238,24 @@ void main() {
     expect(smsCoz('GARANTI BBVA', 'Dogrulama kodunuz 123456', t), isNull);
     expect(smsCoz('5551234', 'Merhaba 100 TL', t), isNull);
   });
+
+  test('Dekont ve POS slip', () {
+    final d = belgeCoz('ZIRAAT BANKASI\nEFT DEKONTU\nIslem Tarihi: 03.11.2026\n'
+        'Gonderen: RAMAZAN KOCABAS\nAlici Adi: YILDIZ TARIM GUBRE LTD\n'
+        'Alici IBAN: TR12 0001 0000 0000 0000 0000 01\nAciklama: gubre bedeli\n'
+        'Tutar: 48.500,00 TL');
+    expect(d.tur, BelgeTuru.dekont);
+    expect(d.firma, 'YILDIZ TARIM GUBRE LTD');
+    expect(d.toplam, 48500);
+    expect(d.odemeBelgesi, isTrue);
+    expect(DateTime.fromMillisecondsSinceEpoch(d.tarih).day, 3);
+    final p = belgeCoz('KARAPINAR ZIRAI ILAC\nSATIS\n05.11.2026 14:22\nKart No: ****1234\n'
+        'Onay Kodu: 123456\nTUTAR 7.250,00 TL\nMUSTERI NUSHASI');
+    expect(p.tur, BelgeTuru.tarim);
+    final q = belgeCoz('OZ YAPI MARKET\nSATIS\n05.11.2026 14:22\nOnay Kodu: 123456\nTUTAR 1.250,00 TL');
+    expect(q.tur, BelgeTuru.market);
+    final w = belgeCoz('DEMIR HIRDAVAT\nSATIS\n05.11.2026\nProvizyon 778899\nTUTAR 2.100,00 TL');
+    expect(w.tur, BelgeTuru.dekont);
+    expect(w.toplam, 2100);
+  });
 }
