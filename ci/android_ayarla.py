@@ -151,3 +151,15 @@ if "bereket.p12" not in g:
         sys.exit("android { bloğu bulunamadı")
 yaz(p, g)
 print("Android ayarları uygulandı:", p)
+
+# ML Kit metin tanıma: kullanılmayan dil paketleri için R8 uyarılarını sustur.
+PROGUARD = os.path.join(KOK, "android", "app", "proguard-rules.pro")
+kurallar = """-dontwarn com.google.mlkit.vision.text.chinese.**
+-dontwarn com.google.mlkit.vision.text.devanagari.**
+-dontwarn com.google.mlkit.vision.text.japanese.**
+-dontwarn com.google.mlkit.vision.text.korean.**
+"""
+eski = open(PROGUARD, encoding="utf-8").read() if os.path.exists(PROGUARD) else ""
+if "mlkit.vision.text.chinese" not in eski:
+    with open(PROGUARD, "w", encoding="utf-8") as f:
+        f.write(eski + kurallar)
