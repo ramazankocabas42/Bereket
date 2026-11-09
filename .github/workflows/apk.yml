@@ -26,6 +26,15 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # Gradle ve Kotlin indirmelerini sakla (GitHub indirme sunucusu bazen 504 veriyor).
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-v1
+          restore-keys: gradle-${{ runner.os }}-
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -50,7 +59,12 @@ jobs:
 
       - name: APK derle
         run: |
-          flutter build apk --release --build-number=${{ github.run_number }} --dart-define=BUILD_NUMBER=${{ github.run_number }}
+          # Ağ hatasında (504) 3 kez dene.
+          for i in 1 2 3; do
+            flutter build apk --release --build-number=${{ github.run_number }} --dart-define=BUILD_NUMBER=${{ github.run_number }} && break
+            if [ "$i" = 3 ]; then exit 1; fi
+            echo "Derleme başarısız, 60 sn sonra yeniden denenecek ($i/3)"; sleep 60
+          done
           mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/bereket.apk
 
       - name: İmza kontrolü (güncellemeler eskisinin üzerine kurulabilsin)
