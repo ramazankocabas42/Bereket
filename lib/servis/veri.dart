@@ -195,7 +195,11 @@ class Veri {
 
   /// Borç/alacak hesabına hareket ekler.
   static Future<void> hareketEkle(String iid, String hesapId,
-      {required String tip, required double tutar, String aciklama = '', int? tarih}) {
+      {required String tip,
+      required double tutar,
+      String aciklama = '',
+      int? tarih,
+      String? anahtar}) {
     return kol(iid, 'hesaplar').doc(hesapId).update({
       'hareketler': FieldValue.arrayUnion([
         {
@@ -203,11 +207,17 @@ class Veri {
           'tutar': tutar,
           'ac': aciklama,
           't': tarih ?? simdi,
-          'k': yeniKod(), // aynı tutarlı iki hareket birleşmesin
+          'k': anahtar ?? yeniKod(), // aynı tutarlı iki hareket birleşmesin
         }
       ]),
     });
   }
+
+  /// Hesaba işlenmiş bir SMS'i işaretler (aynı mesaj ikinci kez eklenmesin).
+  static Future<void> smsIsaretle(String iid, String hesapId, String anahtar) =>
+      kol(iid, 'hesaplar').doc(hesapId).update({
+        'smsAnahtarlar': FieldValue.arrayUnion([anahtar]),
+      });
 
   static Future<void> hareketSil(
           String iid, String hesapId, Map<String, dynamic> hareket) =>

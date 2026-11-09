@@ -4,6 +4,7 @@ import 'package:bereket/bicim.dart';
 import 'package:bereket/ekstre.dart';
 import 'package:bereket/hesap.dart';
 import 'package:bereket/modeller.dart';
+import 'package:bereket/sms_coz.dart';
 
 Kayit k(String id, Map<String, dynamic> d) => Kayit(id, d);
 
@@ -206,5 +207,35 @@ void main() {
     expect(b.hesaplasma, 7500);
     final ozet = v.aileOzeti('Babam');
     expect((ozet['tumu'] as Map)['hesaplasma'], 7500);
+  });
+
+  test('Belge: MEDAŞ faturası', () {
+    const f = 'MERAM ELEKTRIK DAGITIM A.S. (MEDAS)\n'
+        'Tesisat No: 4001234567\n'
+        'Fatura Tarihi: 02.10.2026\n'
+        'Toplam Tuketim 12.450 kWh\n'
+        'Odenecek Tutar 38.917,50 TL\n';
+    final o = belgeCoz(f);
+    expect(o.tur, BelgeTuru.elektrik);
+    expect(o.aboneNo, '4001234567');
+    expect(o.kwh, 12450);
+    expect(o.toplam, 38917.5);
+  });
+
+  test('Banka SMS çözme', () {
+    final t = DateTime(2026, 11, 5, 10).millisecondsSinceEpoch;
+    final a = smsCoz('GARANTI BBVA',
+        'Bonus kartinizin 05.11.2026 tarihli ekstre borcu 12.345,67 TL, son odeme tarihi 15.11.2026.', t)!;
+    expect(a.tur, SmsTuru.kartBorcu);
+    expect(a.tutar, 12345.67);
+    expect(DateTime.fromMillisecondsSinceEpoch(a.sonOdeme).day, 15);
+    final b = smsCoz('VAKIFBANK', 'Hesabiniza 45.000,00 TL EFT gelmistir. Gonderen: PANAGRO A.S.', t)!;
+    expect(b.tur, SmsTuru.gelen);
+    expect(b.tutar, 45000);
+    final c = smsCoz('ZIRAAT', 'Kredi taksit tutariniz 5.250,00 TL, son odeme 20.11.2026', t)!;
+    expect(c.tur, SmsTuru.krediTaksit);
+    expect(c.hesapAdi, 'Ziraat Bankası Kredi');
+    expect(smsCoz('GARANTI BBVA', 'Dogrulama kodunuz 123456', t), isNull);
+    expect(smsCoz('5551234', 'Merhaba 100 TL', t), isNull);
   });
 }

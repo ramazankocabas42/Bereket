@@ -34,7 +34,15 @@ class BelgeOzet {
     required this.satirlar,
     this.litre,
     this.kalem,
+    this.aboneNo = '',
+    this.kwh,
   });
+
+  /// Elektrik faturasında abone / tesisat numarası.
+  String aboneNo;
+
+  /// Elektrik faturasındaki toplam tüketim.
+  double? kwh;
 
   BelgeTuru tur;
   String firma;
@@ -156,6 +164,29 @@ BelgeOzet belgeCoz(String hamMetin, {DateTime? bugun}) {
     toplam = kalemSatirlari.fold<double>(0, (x, s) => x + s.tutar);
   }
 
+  // Elektrik: abone/tesisat no ve toplam kWh
+  var aboneNo = '';
+  final am = RegExp(
+          r'(abone|tesisat|sozlesme hesap|tekil kod|musteri)\s*(no|numarasi|kodu)?\s*[:.]?\s*(\d{5,16})')
+      .firstMatch(araMetni(hamMetin));
+  if (am != null) aboneNo = am.group(3)!;
+  double? kwh;
+  if (tur == BelgeTuru.elektrik) {
+    for (final s in satirlar) {
+      final k = araMetni(s);
+      if (!k.contains('kwh')) continue;
+      final m = RegExp(r'(\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?)\s*kwh').firstMatch(k);
+      if (m == null) continue;
+      final x = sayiOku(m.group(1)!);
+      if (x == null) continue;
+      if (k.contains('toplam') || k.contains('tuketim')) {
+        kwh = x;
+        break;
+      }
+      if (kwh == null || x > kwh) kwh = x;
+    }
+  }
+
   String? kalem;
   if (tur == BelgeTuru.akaryakit) kalem = 'Mazot';
   if (tur == BelgeTuru.tarim) kalem = tarlaKalemiTahmin(hamMetin) ?? 'Gübre';
@@ -169,5 +200,7 @@ BelgeOzet belgeCoz(String hamMetin, {DateTime? bugun}) {
     satirlar: kalemSatirlari,
     litre: litre,
     kalem: kalem,
+    aboneNo: aboneNo,
+    kwh: kwh,
   );
 }

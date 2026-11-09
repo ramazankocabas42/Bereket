@@ -4,6 +4,7 @@ import '../bicim.dart';
 import '../servis/veri.dart';
 import '../tema.dart';
 import 'ana.dart';
+import 'banka_mesajlari.dart';
 import 'hesaplar.dart';
 import 'kabuk.dart';
 import 'varliklar.dart';
@@ -100,6 +101,13 @@ class _FinansSayfasiState extends State<FinansSayfasi> {
                     ],
                   ),
                 ),
+                Buton(
+                  yazi: 'Banka mesajlarından borçları güncelle',
+                  ikon: Icons.sms,
+                  renk: ButonRenk.mor,
+                  onTap: () => git(context, BankaMesajlari(durum: durum)),
+                ),
+                const SizedBox(height: 14),
                 if (yaklasan.isNotEmpty)
                   Panel(
                     baslik: 'Yaklaşan ödemeler (7 gün)',

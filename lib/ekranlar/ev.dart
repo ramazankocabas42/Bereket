@@ -10,6 +10,8 @@ import '../modeller.dart';
 import '../sabitler.dart';
 import '../servis/veri.dart';
 import '../tema.dart';
+import 'banka_mesajlari.dart';
+import 'belge_okut.dart';
 import 'defter.dart';
 import 'ekipman.dart';
 import 'form.dart';
@@ -115,6 +117,28 @@ class _EvButcesiSayfasiState extends State<EvButcesiSayfasi> {
                       child: Buton(
                         yazi: 'Harcama Ekle',
                         onTap: () => giderFormu(context, durum, ev: true),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Buton(
+                        yazi: 'Banka SMS',
+                        ikon: Icons.sms,
+                        renk: ButonRenk.mor,
+                        onTap: () => git(context, BankaMesajlari(durum: durum)),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Buton(
+                        yazi: 'Fiş Okut',
+                        ikon: Icons.photo_camera,
+                        renk: ButonRenk.turuncu,
+                        onTap: () => git(context, BelgeOkut(durum: durum)),
                       ),
                     ),
                   ],

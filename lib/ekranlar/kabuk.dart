@@ -5,6 +5,7 @@ import '../servis/guncelleme.dart';
 import '../servis/veri.dart';
 import '../tema.dart';
 import 'ana.dart';
+import 'banka_mesajlari.dart';
 import 'belge_okut.dart';
 import 'ev.dart';
 import 'hesaplar.dart';
@@ -73,7 +74,8 @@ class _KabukState extends State<Kabuk> {
           child: ListView(
             shrinkWrap: true,
             children: [
-              oge('📷', 'Belge okut (fiş, fatura, el yazısı)', () => git(context, BelgeOkut(durum: d))),
+              oge('📷', 'Belge okut (fiş, fatura, PDF, el yazısı)', () => git(context, BelgeOkut(durum: d))),
+              oge('💬', 'Banka mesajlarını tara (SMS)', () => git(context, BankaMesajlari(durum: d))),
               oge('🧾', 'Tarla gideri / fatura', () => giderFormu(context, d)),
               oge('🚜', 'Makine işçiliği / yevmiye', () => giderFormu(context, d, iscilik: true)),
               oge('💰', 'Satış', () => satisFormu(context, d)),

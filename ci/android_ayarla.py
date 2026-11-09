@@ -35,6 +35,7 @@ izinler = [
     "android.permission.INTERNET",
     "android.permission.REQUEST_INSTALL_PACKAGES",
     "android.permission.POST_NOTIFICATIONS",
+    "android.permission.READ_SMS",
 ]
 eklenecek = "".join(
     f'    <uses-permission android:name="{i}"/>\n' for i in izinler if i not in m
@@ -163,3 +164,90 @@ eski = open(PROGUARD, encoding="utf-8").read() if os.path.exists(PROGUARD) else 
 if "mlkit.vision.text.chinese" not in eski:
     with open(PROGUARD, "w", encoding="utf-8") as f:
         f.write(eski + kurallar)
+
+# Banka SMS'lerini okumak için MainActivity (yerel kanal: bereket/sms).
+import glob
+aktiviteler = glob.glob(os.path.join(APP, "src", "main", "kotlin", "**", "MainActivity.kt"), recursive=True)
+for yol in aktiviteler:
+    paket = re.search(r"^package\s+([\w.]+)", oku(yol), re.M).group(1)
+    yaz(yol, f"""package {paket}
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+
+class MainActivity : FlutterActivity() {{
+    private var bekleyen: MethodChannel.Result? = null
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {{
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "bereket/sms")
+            .setMethodCallHandler {{ call, result ->
+                when (call.method) {{
+                    "izinVarMi" -> result.success(izin())
+                    "izinIste" -> {{
+                        if (izin()) {{
+                            result.success(true)
+                        }} else {{
+                            bekleyen = result
+                            requestPermissions(arrayOf(Manifest.permission.READ_SMS), 4242)
+                        }}
+                    }}
+                    "oku" -> {{
+                        if (!izin()) {{
+                            result.error("izin", "SMS izni yok", null)
+                        }} else {{
+                            val gun = (call.argument<Int>("gun") ?: 180).toLong()
+                            val sinir = System.currentTimeMillis() - gun * 86400000L
+                            val liste = ArrayList<Map<String, Any>>()
+                            try {{
+                                val c = contentResolver.query(
+                                    Uri.parse("content://sms/inbox"),
+                                    arrayOf("address", "body", "date"),
+                                    "date > ?",
+                                    arrayOf(sinir.toString()),
+                                    "date DESC"
+                                )
+                                c?.use {{
+                                    while (it.moveToNext() && liste.size < 5000) {{
+                                        liste.add(
+                                            mapOf(
+                                                "adres" to (it.getString(0) ?: ""),
+                                                "metin" to (it.getString(1) ?: ""),
+                                                "tarih" to it.getLong(2)
+                                            )
+                                        )
+                                    }}
+                                }}
+                                result.success(liste)
+                            }} catch (e: Exception) {{
+                                result.error("okuma", e.message, null)
+                            }}
+                        }}
+                    }}
+                    else -> result.notImplemented()
+                }}
+            }}
+    }}
+
+    private fun izin(): Boolean =
+        checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {{
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 4242) {{
+            bekleyen?.success(
+                grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            )
+            bekleyen = null
+        }}
+    }}
+}}
+""")

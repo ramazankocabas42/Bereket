@@ -15,7 +15,11 @@ double _n(Object? v) => v is num ? v.toDouble() : 0;
 
 /// Tarla ya da ev gideri, makine işçiliği, yevmiye.
 Future<void> giderFormu(BuildContext context, Durum durum,
-    {Kayit? gider, bool ev = false, bool iscilik = false, String? tarlaId}) {
+    {Kayit? gider,
+    bool ev = false,
+    bool iscilik = false,
+    String? tarlaId,
+    Map<String, dynamic>? hazir}) {
   final v = durum.v;
   final evMi = gider != null ? gider.s('alan') == 'ev' : ev;
   final simdi = DateTime.now();
@@ -62,6 +66,7 @@ Future<void> giderFormu(BuildContext context, Durum durum,
     'odendi': true,
     'tarlaIds': tarlaId == null ? <String>[] : [tarlaId],
     ...?gider?.d,
+    ...?hazir,
   };
   if (gider != null && gider.s('sayacId').isNotEmpty) {
     for (final e in sayacAdlari.entries) {
@@ -73,6 +78,18 @@ Future<void> giderFormu(BuildContext context, Durum durum,
   bool yevmiye(Map<String, dynamic> d) => k(d, 'İşçilik (Yevmiye)');
   bool sayacli(Map<String, dynamic> d) =>
       k(d, 'Elektrik') && (d['sayac'] ?? '').toString().isNotEmpty;
+  Kayit? secilenSayac(Map<String, dynamic> d) =>
+      sayacli(d) ? v.bul('sayaclar', sayacAdlari[d['sayac']] ?? '') : null;
+  bool ortakSayac(Map<String, dynamic> d) => secilenSayac(d)?.b('ortak') ?? false;
+  double benimKwh(Map<String, dynamic> d) {
+    double fark(String a, String b) {
+      final x = _n(d[b]) - _n(d[a]);
+      return x > 0 ? x : 0;
+    }
+    return fark('ilkEndeks', 'sonEndeks') + fark('ilkEndeks2', 'sonEndeks2');
+  }
+  double kwhFiyati(Map<String, dynamic> d) =>
+      _n(d['faturaKwh']) > 0 ? _n(d['faturaTutar']) / _n(d['faturaKwh']) : 0;
 
   return formAc(
     context,
@@ -108,6 +125,22 @@ Future<void> giderFormu(BuildContext context, Durum durum,
             secenekler: ['', ...sayacAdlari.keys],
             gorunur: (d) => k(d, 'Elektrik'),
             aciklama: 'Seçerseniz fatura o sayacın suladığı ekili tarlalara dekara göre bölünür.'),
+      Alan('faturaKwh', 'Faturadaki toplam tüketim', tip: AlanTip.sayi, birim: 'kWh',
+          gorunur: ortakSayac,
+          aciklama: 'Kuyu ortak: fatura, sizin sayaçta okuduğunuz kWh kadar size yazılır.'),
+      Alan('faturaTutar', 'Faturanın toplam tutarı', tip: AlanTip.sayi, birim: '₺',
+          gorunur: ortakSayac),
+      Alan('ilkEndeks', 'Sulamaya başladığımda sayaç', tip: AlanTip.sayi, birim: 'kWh',
+          gorunur: ortakSayac),
+      Alan('sonEndeks', 'Sulamayı bitirdiğimde sayaç', tip: AlanTip.sayi, birim: 'kWh',
+          gorunur: ortakSayac),
+      Alan('ilkEndeks2', '2. dönem başlangıç (varsa)', tip: AlanTip.sayi, birim: 'kWh',
+          gorunur: ortakSayac),
+      Alan('sonEndeks2', '2. dönem bitiş (varsa)', tip: AlanTip.sayi, birim: 'kWh',
+          gorunur: ortakSayac),
+      Alan('odeme', 'Faturayı kim ödedi', tip: AlanTip.secim,
+          secenekler: const ['Tamamını ben ödedim', 'Sadece kendi payımı ödedim', 'Henüz ödenmedi'],
+          gorunur: ortakSayac),
       Alan('tarlaIds', 'Hangi tarlalar', tip: AlanTip.tarlalar,
           gorunur: (d) => !sayacli(d),
           aciklama: 'Birden fazla seçerseniz tutar ve miktar dekarlarına göre bölünür. '
@@ -125,6 +158,16 @@ Future<void> giderFormu(BuildContext context, Durum durum,
       if (yevmiye(d) && (key == 'kisi' || key == 'gun')) {
         final m = _n(d['kisi']) * _n(d['gun']);
         if (m > 0) d['miktar'] = m;
+      }
+      if (ortakSayac(d) &&
+          ['faturaKwh', 'faturaTutar', 'ilkEndeks', 'sonEndeks', 'ilkEndeks2', 'sonEndeks2', 'sayac']
+              .contains(key)) {
+        final kwh = benimKwh(d);
+        final f = kwhFiyati(d);
+        d['miktar'] = kwh;
+        d['birim'] = 'kWh';
+        if (kwh > 0 && f > 0) d['tutar'] = double.parse((kwh * f).toStringAsFixed(2));
+        return;
       }
       if (['miktar', 'birimFiyat', 'kisi', 'gun'].contains(key)) {
         final miktar = yevmiye(d) ? _n(d['kisi']) * _n(d['gun']) : _n(d['miktar']);
@@ -150,10 +193,17 @@ Future<void> giderFormu(BuildContext context, Durum durum,
         final s = v.tarlaSahibi(id);
         kisiler[s] = (kisiler[s] ?? 0) + (v.tarla(id)?.n('dekar') ?? 0);
       }
+      final ortak = ortakSayac(d);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Satir('Toplam', tl(tutar), kalin: true),
+          if (ortak) ...[
+            Satir('Sizin kullanımınız', '${sayi(benimKwh(d))} kWh'),
+            Satir('kWh fiyatı (fatura)', kwhFiyati(d) > 0 ? tl(kwhFiyati(d)) : '-'),
+            Satir('Ortakların payı', tl((_n(d['faturaTutar']) - tutar).clamp(0, double.infinity))),
+            const Divider(height: 14),
+          ],
+          Satir(ortak ? 'Sizin payınız' : 'Toplam', tl(tutar), kalin: true),
           if (dekar > 0) ...[
             Satir('Seçili alan', '${sayi(dekar)} da'),
             Satir('Dekar başı tutar', tl(tutar / dekar), renk: Renk.altin),
@@ -180,7 +230,30 @@ Future<void> giderFormu(BuildContext context, Durum durum,
       }
       d['alan'] = 'tarla';
       final yeni = gider == null;
+      final sayac = v.bul('sayaclar', (d['sayacId'] ?? '').toString());
+      final ortakFatura = kalem == 'Elektrik' && (sayac?.b('ortak') ?? false);
+      if (ortakFatura) {
+        d['miktar'] = benimKwh(d);
+        d['birim'] = 'kWh';
+        if ((d['tedarikci'] ?? '').toString().isEmpty) d['tedarikci'] = sayac?.s('kurum') ?? 'MEDAŞ';
+        d['odendi'] = d['odeme'] != 'Henüz ödenmedi';
+      }
       await durum.kaydet('giderler', d, id: gider?.id);
+      if (yeni && ortakFatura && d['odeme'] == 'Tamamını ben ödedim') {
+        final digerPay = _n(d['faturaTutar']) - _n(d['tutar']);
+        if (digerPay > 0) {
+          await Veri.borcaYaz(durum.iid, v,
+              kime: sayac!.s('ortaklar').isNotEmpty
+                  ? sayac.s('ortaklar')
+                  : 'Kuyu ortakları (${sayac.s('ad')})',
+              tur: 'Kişi',
+              tutar: digerPay,
+              aciklama: 'Elektrik faturası ortak payı',
+              tarih: _n(d['tarih']).toInt(),
+              uid: durum.uid,
+              yon: 'alacak');
+        }
+      }
       if (yeni && d['odendi'] != true) {
         final kime = (makine(d) || yevmiye(d))
             ? (d['yapan'] ?? '').toString()
@@ -205,11 +278,16 @@ Future<void> sayacFormu(BuildContext context, Durum durum, {Kayit? sayac}) {
     context,
     baslik: sayac == null ? 'Elektrik Sayacı' : 'Sayacı Düzenle',
     v: durum.v,
-    baslangic: {...?sayac?.d},
-    alanlar: const [
-      Alan('ad', 'Sayaç adı', ipucu: 'Örn. Aşağı kuyu', zorunlu: true),
-      Alan('aboneNo', 'Abone / tesisat no'),
-      Alan('tarlaIds', 'Suladığı tarlalar', tip: AlanTip.tarlalar, zorunlu: true),
+    baslangic: {'kurum': 'MEDAŞ', ...?sayac?.d},
+    alanlar: [
+      const Alan('ad', 'Sayaç adı', ipucu: 'Örn. Aşağı kuyu', zorunlu: true),
+      const Alan('aboneNo', 'Abone / tesisat no',
+          aciklama: 'Faturayı okuttuğunuzda bu numarayla sayaç kendiliğinden bulunur.'),
+      const Alan('kurum', 'Elektrik şirketi', oneriler: ['MEDAŞ']),
+      const Alan('tarlaIds', 'Suladığınız tarlalar', tip: AlanTip.tarlalar, zorunlu: true),
+      const Alan('ortak', 'Kuyu başkalarıyla ortak', tip: AlanTip.anahtar,
+          ipucu: 'Açarsanız faturalar, sayaçta okuduğunuz başlangıç-bitiş kWh farkına göre size yazılır.'),
+      Alan('ortaklar', 'Ortaklar', gorunur: (d) => d['ortak'] == true, ipucu: 'Örn. Hasan, Mehmet'),
     ],
     onKaydet: (d) => durum.kaydet('sayaclar', d, id: sayac?.id),
     onSil: sayac == null ? null : () => durum.sil('sayaclar', sayac.id),

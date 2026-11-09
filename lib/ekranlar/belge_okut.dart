@@ -1,16 +1,20 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:pdfx/pdfx.dart';
 
 import '../belge.dart';
 import '../bicim.dart';
 import '../ekstre.dart';
+import '../modeller.dart';
 import '../sabitler.dart';
 import '../servis/veri.dart';
 import '../tema.dart';
 import 'form.dart';
+import 'uretim.dart';
 
 /// Kamerayla belge okutma: fiş, fatura, el yazısı hesap. Okunanı özetler,
 /// onay alınca ilgili bölüme işler.
@@ -65,20 +69,99 @@ class _BelgeOkutState extends State<BelgeOkut> {
         _resim = File(x.path);
         _ozet = null;
       });
-      final okuyucu = TextRecognizer(script: TextRecognitionScript.latin);
-      try {
-        final sonuc = await okuyucu.processImage(InputImage.fromFilePath(x.path));
-        _metin = sonuc.text;
-      } finally {
-        await okuyucu.close();
-      }
-      if (_metin.trim().isEmpty) throw 'Belgede yazı bulunamadı. Daha aydınlık ve düz bir fotoğraf deneyin.';
-      _yerlestir(belgeCoz(_metin));
+      await _oku([x.path]);
     } catch (e) {
       if (mounted) bildir(context, hataYazisi(e));
     } finally {
       if (mounted) setState(() => _okunuyor = false);
     }
+  }
+
+  /// Görüntü dosyalarındaki yazıyı okuyup özete çevirir.
+  Future<void> _oku(List<String> yollar) async {
+    final okuyucu = TextRecognizer(script: TextRecognitionScript.latin);
+    final b = StringBuffer();
+    try {
+      for (final y in yollar) {
+        final sonuc = await okuyucu.processImage(InputImage.fromFilePath(y));
+        b.writeln(sonuc.text);
+      }
+    } finally {
+      await okuyucu.close();
+    }
+    _metin = b.toString();
+    if (_metin.trim().isEmpty) {
+      throw 'Belgede yazı bulunamadı. Daha aydınlık ve düz bir fotoğraf deneyin.';
+    }
+    _yerlestir(belgeCoz(_metin));
+  }
+
+  /// PDF ya da resim dosyası (Gmail'den kaydedilen ekstre / fatura).
+  Future<void> _dosya() async {
+    try {
+      final r = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['pdf', 'jpg', 'jpeg', 'png'],
+        withData: true,
+      );
+      if (r == null || r.files.isEmpty) return;
+      final f = r.files.first;
+      final bytes = f.bytes;
+      if (bytes == null) throw 'Dosya okunamadı.';
+      setState(() {
+        _okunuyor = true;
+        _ozet = null;
+        _resim = null;
+      });
+      final gecici = Directory.systemTemp.createTempSync('belge');
+      final yollar = <String>[];
+      if (f.name.toLowerCase().endsWith('.pdf')) {
+        final doc = await PdfDocument.openData(bytes);
+        try {
+          final sayfa = doc.pagesCount < 3 ? doc.pagesCount : 3;
+          for (var i = 1; i <= sayfa; i++) {
+            final p = await doc.getPage(i);
+            try {
+              final img = await p.render(
+                width: p.width * 2.5,
+                height: p.height * 2.5,
+                format: PdfPageImageFormat.png,
+                backgroundColor: '#FFFFFF',
+              );
+              if (img == null) continue;
+              final yol = '${gecici.path}/s$i.png';
+              File(yol).writeAsBytesSync(img.bytes);
+              yollar.add(yol);
+            } finally {
+              await p.close();
+            }
+          }
+        } finally {
+          await doc.close();
+        }
+      } else {
+        final yol = '${gecici.path}/${f.name}';
+        File(yol).writeAsBytesSync(bytes);
+        yollar.add(yol);
+      }
+      if (yollar.isEmpty) throw 'Dosyadan sayfa çıkarılamadı.';
+      if (mounted) setState(() => _resim = File(yollar.first));
+      await _oku(yollar);
+    } catch (e) {
+      if (mounted) bildir(context, hataYazisi(e));
+    } finally {
+      if (mounted) setState(() => _okunuyor = false);
+    }
+  }
+
+  /// Faturadaki abone numarasına göre sayaç.
+  Kayit? _sayacBul(String aboneNo) {
+    if (aboneNo.isEmpty) return null;
+    for (final s in durum.v.sayaclar) {
+      final a = s.s('aboneNo').replaceAll(RegExp(r'\D'), '');
+      if (a.isNotEmpty && (a == aboneNo || aboneNo.endsWith(a) || a.endsWith(aboneNo))) return s;
+    }
+    return null;
   }
 
   void _yerlestir(BelgeOzet o) {
@@ -97,9 +180,11 @@ class _BelgeOkutState extends State<BelgeOkut> {
         _hedef = _Hedef.evGider;
         _evKategori = 'Market';
       case BelgeTuru.elektrik:
-        _hedef = _Hedef.evGider;
         _evKategori = 'Elektrik';
         _tarlaKalem = 'Elektrik';
+        final sayac = _sayacBul(o.aboneNo);
+        _hedef = sayac != null ? _Hedef.tarlaGider : _Hedef.evGider;
+        _sayac = sayac?.id ?? '';
       case BelgeTuru.tarim:
         _hedef = _Hedef.tarlaGider;
         _tarlaKalem = o.kalem ?? 'Gübre';
@@ -172,6 +257,27 @@ class _BelgeOkutState extends State<BelgeOkut> {
       } else {
         if (tutar <= 0) throw 'Toplam tutarı yazın.';
         final litre = sayiOku(_litre.text);
+        final sayacK = durum.v.bul('sayaclar', _sayac);
+        if (_hedef == _Hedef.tarlaGider &&
+            _tarlaKalem == 'Elektrik' &&
+            sayacK != null &&
+            sayacK.b('ortak')) {
+          // Ortak kuyu: sayaç başlangıç-bitiş değerleri gerekli, forma geç.
+          final nav = Navigator.of(context);
+          nav.pop();
+          await giderFormu(nav.context, durum, hazir: {
+            'kalem': 'Elektrik',
+            'sayac': sayacK.s('ad'),
+            'faturaKwh': o.kwh,
+            'faturaTutar': tutar,
+            'tarih': o.tarih,
+            'yil': t.year,
+            'tedarikci': firma.isEmpty ? sayacK.s('kurum') : firma,
+            'odeme': 'Tamamını ben ödedim',
+            'aciklama': 'Fatura ${o.aboneNo}',
+          });
+          return;
+        }
         if (_hedef == _Hedef.tarlaGider) {
           final sayacId = _tarlaKalem == 'Elektrik' ? _sayac : '';
           await durum.kaydet('giderler', {
@@ -259,6 +365,18 @@ class _BelgeOkutState extends State<BelgeOkut> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 10),
+                Buton(
+                  yazi: 'Dosyadan oku (PDF)',
+                  ikon: Icons.picture_as_pdf,
+                  renk: ButonRenk.mor,
+                  onTap: _okunuyor ? null : _dosya,
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Gmail\'e gelen ekstre ya da faturayı açıp "İndir / Kaydet" deyin, sonra buradan seçin.',
+                  style: yaziSoluk,
                 ),
                 if (_resim != null) ...[
                   const SizedBox(height: 12),
@@ -524,7 +642,13 @@ class _BelgeOkutState extends State<BelgeOkut> {
       _Hedef.tarlaGider => 'Tarla gideri → $_tarlaKalem'
           '${_tarlalar.isEmpty ? '' : ' (${_tarlalar.length} tarlaya dekara göre)'}',
     };
-    return '${belgeTuruAdi[o.tur]}\n'
+    final sayacK = durum.v.bul('sayaclar', _sayac);
+    final elektrikEk = o.tur == BelgeTuru.elektrik
+        ? '${o.aboneNo.isEmpty ? '' : 'Abone ${o.aboneNo} · '}'
+            '${o.kwh == null ? '' : '${sayi(o.kwh!)} kWh · '}'
+            '${sayacK == null ? 'kayıtlı sayaç bulunamadı' : 'Sayaç: ${sayacK.s('ad')}${sayacK.b('ortak') ? ' (ortak kuyu → başlangıç/bitiş değerleri sorulacak)' : ''}'}\n'
+        : '';
+    return '${belgeTuruAdi[o.tur]}\n$elektrikEk'
         '${_firma.text.isEmpty ? '' : '${_firma.text} · '}${tarih(o.tarih)}'
         '${litre != null && litre > 0 ? ' · ${sayi(litre)} lt' : ''}\n'
         'Tutar: ${tl(tutar)}\n'
